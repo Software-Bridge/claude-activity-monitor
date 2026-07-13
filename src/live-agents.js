@@ -6,7 +6,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { LIVE_DIR, metaPathFor, transcriptPathFor } = require('./paths');
+const { LIVE_DIR, subagentDir, metaPathFor, transcriptPathFor } = require('./paths');
 
 /**
  * A killed agent never fires SubagentStop, so its file is never removed. Rather
@@ -30,7 +30,7 @@ function describe(agent) {
   const cached = descriptions.get(agent.agent_id);
   if (cached) return cached;
 
-  const metaPath = metaPathFor(agent.transcript_path, agent.session_id, agent.agent_id);
+  const metaPath = metaPathFor(agent.transcript_path, agent.agent_id);
   if (!metaPath) return null;
 
   try {
@@ -44,19 +44,36 @@ function describe(agent) {
   }
 }
 
-/** When the agent last wrote to its transcript; falls back to its start time. */
+/**
+ * When the agent last showed signs of life, and whether we could tell at all.
+ *
+ * The distinction matters: if we cannot even find the directory Claude Code
+ * keeps the subagent's files in — an overlong path on Windows, a record written
+ * on the other side of a WSL boundary, a moved projects directory — then we have
+ * no liveness signal, and silence tells us nothing. Treating that as death would
+ * quietly turn this back into the dumb start-time timeout it exists to replace,
+ * and hide agents that are running perfectly well.
+ */
 function lastActiveAt(agent) {
-  const transcript = transcriptPathFor(agent.transcript_path, agent.session_id, agent.agent_id);
+  const dir = subagentDir(agent.transcript_path);
+  const transcript = transcriptPathFor(agent.transcript_path, agent.agent_id);
+
   if (transcript) {
     try {
       // Clamped so a coarse or backdated mtime can never age an agent past its
       // own start time and reap it on the first poll.
-      return Math.max(agent.startedAt, fs.statSync(transcript).mtimeMs);
+      return { at: Math.max(agent.startedAt, fs.statSync(transcript).mtimeMs), known: true };
     } catch {
-      /* not created yet, or moved */
+      /* no transcript yet — fall through */
     }
   }
-  return agent.startedAt;
+
+  // The directory is there but this agent has written nothing into it: it is
+  // either seconds old or it died before its first message. Start time is then a
+  // fair proxy, and the silence window will decide between those two.
+  if (dir && fs.existsSync(dir)) return { at: agent.startedAt, known: true };
+
+  return { at: agent.startedAt, known: false };
 }
 
 function discard(file) {
@@ -119,12 +136,15 @@ function liveAgents(now = Date.now()) {
   for (const agent of readLiveFiles(now)) {
     seen.add(agent.agent_id);
 
-    const quietFor = now - lastActiveAt(agent);
+    const { at, known } = lastActiveAt(agent);
+    const quietFor = now - at;
+
     if (quietFor > GARBAGE_AFTER_MS) {
       discard(agent.file); // Certainly dead: nothing runs for a day in silence.
       continue;
     }
-    if (quietFor > SILENT_FOR_MS) continue; // Hidden, but it can come back.
+    // Only silence we can actually observe counts against an agent.
+    if (known && quietFor > SILENT_FOR_MS) continue; // Hidden, but it can come back.
 
     agents.push({
       id: agent.agent_id,

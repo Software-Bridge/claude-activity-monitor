@@ -23,6 +23,8 @@ const { LIVE_DIR, liveFileFor } = require('./paths');
 // to need reporting, and a breadcrumb we cannot write is no breadcrumb at all.
 const ERROR_LOG = path.join(os.tmpdir(), 'claude-agent-ui-hook-errors.log');
 
+const fwd = (p) => (typeof p === 'string' ? p.replace(/\\/g, '/') : p);
+
 function main(raw) {
   let payload;
   try {
@@ -35,13 +37,18 @@ function main(raw) {
   if (!payload || typeof payload !== 'object') return;
 
   const { hook_event_name: event, agent_id: agentId } = payload;
-  if (!agentId) return;
+
+  const file = liveFileFor(agentId); // null if the id is not a safe filename
+  if (!file) return;
 
   if (event === 'SubagentStop') {
     try {
-      fs.unlinkSync(liveFileFor(agentId));
+      fs.unlinkSync(file);
     } catch (err) {
-      if (err.code !== 'ENOENT') throw err; // Already gone is the happy path.
+      // Already gone is the happy path. A Windows sharing violation (the window
+      // reads this directory 2.5x a second, and antivirus scans it) is transient
+      // and not worth failing over — the reaper sweeps the file either way.
+      if (!['ENOENT', 'EPERM', 'EBUSY'].includes(err.code)) throw err;
     }
     return;
   }
@@ -53,12 +60,15 @@ function main(raw) {
     agent_id: agentId,
     agent_type: payload.agent_type,
     session_id: payload.session_id,
-    cwd: payload.cwd,
-    transcript_path: payload.transcript_path,
+    // Forward slashes are absolute on Windows too, and unlike backslashes they
+    // survive being re-parsed by a POSIX reader — which happens whenever the
+    // hook and the window straddle WSL.
+    cwd: fwd(payload.cwd),
+    transcript_path: fwd(payload.transcript_path),
   });
 
   fs.mkdirSync(LIVE_DIR, { recursive: true });
-  fs.writeFileSync(liveFileFor(agentId), record);
+  fs.writeFileSync(file, record);
 }
 
 let stdin = '';
