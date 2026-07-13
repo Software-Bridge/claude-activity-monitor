@@ -3,8 +3,8 @@
 const { app, BrowserWindow, ipcMain, screen, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
-const { DATA_DIR, EVENT_LOG } = require('./paths');
-const { liveAgents, compactIfLarge } = require('./live-agents');
+const { DATA_DIR } = require('./paths');
+const { liveAgents } = require('./live-agents');
 
 const POLL_MS = 400;
 const WIDTH = 340;
@@ -37,15 +37,21 @@ function defaultPosition() {
   };
 }
 
+// 'moved' fires continuously while dragging, so writing on each one would do
+// synchronous disk I/O on the UI thread throughout the drag.
+let persistTimer = null;
 function persistPosition() {
-  if (!win) return;
-  const [x, y] = win.getPosition();
-  try {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(WINDOW_STATE, JSON.stringify({ x, y }));
-  } catch {
-    /* position is a nicety, not worth surfacing */
-  }
+  clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    if (!win || win.isDestroyed()) return;
+    const [x, y] = win.getPosition();
+    try {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(WINDOW_STATE, JSON.stringify({ x, y }));
+    } catch {
+      /* position is a nicety, not worth surfacing */
+    }
+  }, 300);
 }
 
 function createWindow() {
@@ -84,26 +90,43 @@ function createWindow() {
 
   // Keep links from opening inside the overlay.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    if (/^https?:$/.test(new URL(url).protocol)) shell.openExternal(url);
     return { action: 'deny' };
   });
 }
 
 function push(force = false) {
   if (!win || win.isDestroyed()) return;
-  const agents = liveAgents();
+
+  let agents;
+  try {
+    agents = liveAgents();
+  } catch {
+    // This runs 2.5x a second against files other processes are writing. A
+    // transient read error (antivirus lock, sharing violation) must not take the
+    // window down — skip this tick.
+    return;
+  }
+
   const payload = JSON.stringify(agents);
   if (!force && payload === lastPayload) return;
   lastPayload = payload;
   win.webContents.send('agents', agents);
 }
 
+// Two overlays would sit on top of each other and fight over the saved position.
+if (!app.requestSingleInstanceLock()) app.quit();
+
 app.whenReady().then(() => {
-  try {
-    compactIfLarge();
-  } catch {
-    /* non-fatal */
-  }
+  // Registered before the window exists, so the renderer's 'ready' cannot race
+  // the handler into place.
+  ipcMain.on('ready', () => push(true));
+  ipcMain.on('quit', () => app.quit());
+  ipcMain.on('resize', (_e, height) => {
+    if (!win || win.isDestroyed()) return;
+    if (!Number.isFinite(height)) return;
+    win.setBounds({ height: Math.min(2000, Math.max(1, Math.round(height))) }, false);
+  });
 
   createWindow();
 
@@ -111,15 +134,6 @@ app.whenReady().then(() => {
   // macOS, and this also picks up the meta.json description that lands a beat
   // after SubagentStart fires.
   const timer = setInterval(() => push(), POLL_MS);
-
-  ipcMain.on('ready', () => push(true));
-  ipcMain.on('quit', () => app.quit());
-  ipcMain.on('resize', (_e, height) => {
-    if (win && !win.isDestroyed()) {
-      win.setBounds({ height: Math.max(1, Math.round(height)) }, false);
-    }
-  });
-
   app.on('before-quit', () => clearInterval(timer));
 });
 
@@ -127,5 +141,3 @@ app.on('window-all-closed', () => app.quit());
 
 // A corner overlay has no dock presence on macOS.
 if (process.platform === 'darwin' && app.dock) app.dock.hide();
-
-module.exports = { EVENT_LOG };

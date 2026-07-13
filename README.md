@@ -49,22 +49,31 @@ npm run uninstall-hooks
 ## How it works
 
 ```
-SubagentStart/Stop hook fires
-  └─> src/hook.js appends one line to ~/.claude-agent-ui/events.jsonl
-        └─> the window reduces that log to the set of live agents, and re-renders
+SubagentStart  ->  src/hook.js writes ~/.claude-agent-ui/live/<agent_id>.json
+SubagentStop   ->  src/hook.js deletes it
+                     └─> the window lists that directory every 400ms and re-renders
 ```
 
 Three details are load-bearing:
 
-**It tracks a set of agent ids, never a counter.** A killed agent can fire `SubagentStart`
-with no matching `SubagentStop`. A counter would drift permanently out of sync the first time
-that happened; a set lets stale entries simply expire (after 30 minutes), so the display
-self-heals.
+**The live set is a directory, not a counter and not a log.** A counter would drift
+permanently out of sync the first time an agent was killed without firing `SubagentStop`.
+A shared state file would race, because subagents start in parallel and their hooks run as
+separate, concurrent processes. One file per agent avoids both: create and unlink are atomic
+directory operations on every platform, so there is nothing for concurrent spawns to corrupt,
+and nothing that ever needs compacting. It is also naturally idempotent — a duplicate start
+rewrites the same file, a duplicate stop is a no-op, and a stop that somehow overtakes its own
+start cannot strand a ghost row.
 
-**The log is append-only.** Subagents start in parallel and their hooks run concurrently. A
-read-modify-write of a shared state file would race; a lone append of a short line does not.
-The window does the reducing, so the hook stays on the fast path — it runs inside every
-subagent spawn, and a monitor must never break the thing it monitors.
+**The hook never fails.** It runs inside every subagent spawn, so it swallows every error,
+guards against stdin that never closes, and always exits 0. A monitor must not be able to
+break the thing it monitors.
+
+**Liveness comes from the transcript, not a timeout.** A killed agent leaves its file behind.
+Rather than guess from start time — which cannot tell a long-running agent from a dead one —
+the window watches the mtime of the subagent's own transcript, which grows while it works.
+Ten minutes of silence means it is gone. So a 40-minute agent still shows, and a crashed one
+disappears without needing a Claude Code restart.
 
 **The description does not come from the hook.** `SubagentStart` carries only `agent_id`,
 `agent_type`, `session_id`, `cwd`, `prompt_id` and `transcript_path` — there is no task
@@ -95,11 +104,13 @@ and look:
 
 ## Troubleshooting
 
-**Nothing appears in the window.** Check that `~/.claude-agent-ui/events.jsonl` is being
-written. Hooks inherit the `PATH` of the shell Claude Code spawns, which may not be the one
-that can see `node` — a Claude Code session started *before* you installed Node will not find
-it. The installer pins the absolute path of the Node binary it ran under to avoid this; if you
-later move or upgrade Node, re-run `npm run install-hooks`.
+**Nothing appears in the window.** Check whether `~/.claude-agent-ui/live/` fills up while an
+agent runs. If it stays empty, the hook is not running: hooks inherit the `PATH` of the shell
+Claude Code spawns, which may not be the one that can see `node` — a Claude Code session
+started *before* you installed Node will not find it. The installer pins the absolute path of
+the Node binary it ran under to avoid this; if you later move or upgrade Node, re-run
+`npm run install-hooks`. Any hook crash is recorded in
+`<tmp>/claude-agent-ui-hook-errors.log`.
 
 **`TypeError: Cannot read properties of undefined (reading 'whenReady')`.** Something in your
 environment has set `ELECTRON_RUN_AS_NODE=1` (VSCode's integrated terminal and extension host

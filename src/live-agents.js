@@ -1,107 +1,109 @@
 'use strict';
 
 /**
- * Reduces the append-only event log to the set of subagents that are live now.
+ * The live set is whatever is in LIVE_DIR, minus anything that has clearly died.
  */
 
 const fs = require('fs');
-const { EVENT_LOG, metaPathFor } = require('./paths');
+const path = require('path');
+const { LIVE_DIR, liveFileFor, metaPathFor, transcriptPathFor } = require('./paths');
 
 /**
- * An agent that started but never stopped is not necessarily running: it may
- * have been killed, or Claude Code may have exited before firing SubagentStop.
- * Tracking a set of ids (rather than a counter) means we can simply drop these,
- * so the display self-heals instead of drifting permanently out of sync.
+ * A killed agent never fires SubagentStop, so its file is never removed. Rather
+ * than guess from start time — which cannot tell a long-running agent from a
+ * dead one — we watch the subagent's own transcript, which grows while it works.
+ * Silence for this long means it is gone, and we reap it. This is why the
+ * display self-heals instead of drifting, and why a 40-minute agent still shows.
  */
-const STALE_AFTER_MS = 30 * 60 * 1000;
+const SILENT_FOR_MS = 10 * 60 * 1000;
 
-const COMPACT_ABOVE_BYTES = 2 * 1024 * 1024;
+// The description is immutable once written, so it is worth never re-reading.
+const descriptions = new Map();
 
-function readEvents() {
-  let raw;
-  try {
-    raw = fs.readFileSync(EVENT_LOG, 'utf8');
-  } catch (err) {
-    if (err.code === 'ENOENT') return [];
-    throw err;
-  }
-
-  const events = [];
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      events.push(JSON.parse(line));
-    } catch {
-      // A torn line from a concurrent append; the next read will see it whole.
-    }
-  }
-  return events;
-}
-
-/** The description lives beside the subagent transcript, never in the hook payload. */
 function describe(agent) {
+  const cached = descriptions.get(agent.agent_id);
+  if (cached) return cached;
+
   const metaPath = metaPathFor(agent.transcript_path, agent.session_id, agent.agent_id);
   if (!metaPath) return null;
+
   try {
-    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-    return meta.description || null;
+    const { description } = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    if (description) descriptions.set(agent.agent_id, description);
+    return description || null;
   } catch {
-    // Written moments after SubagentStart fires, so a miss here just means
-    // "not yet" — the next poll picks it up.
+    // Written a moment after SubagentStart fires, so a miss here just means
+    // "not yet" — a later poll picks it up.
     return null;
   }
 }
 
-/** The surviving SubagentStart events, exactly as they were written. */
-function liveStartEvents(now = Date.now()) {
-  const live = new Map();
-
-  for (const ev of readEvents()) {
-    if (!ev.agent_id) continue;
-    if (ev.event === 'SubagentStart') {
-      live.set(ev.agent_id, ev);
-    } else if (ev.event === 'SubagentStop') {
-      live.delete(ev.agent_id);
+/** When the agent last wrote to its transcript; falls back to its start time. */
+function lastActiveAt(agent) {
+  const transcript = transcriptPathFor(agent.transcript_path, agent.session_id, agent.agent_id);
+  if (transcript) {
+    try {
+      return Math.max(agent.startedAt, fs.statSync(transcript).mtimeMs);
+    } catch {
+      /* not created yet, or moved */
     }
   }
+  return agent.startedAt;
+}
 
-  return [...live.values()].filter((ev) => now - ev.ts <= STALE_AFTER_MS);
+function readLiveFiles() {
+  let names;
+  try {
+    names = fs.readdirSync(LIVE_DIR);
+  } catch {
+    return []; // No directory yet: nothing has ever started.
+  }
+
+  const agents = [];
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const raw = fs.readFileSync(path.join(LIVE_DIR, name), 'utf8');
+      const agent = JSON.parse(raw);
+      if (agent && agent.agent_id) agents.push(agent);
+    } catch {
+      // Being written right now, or unreadable. The next poll will see it.
+    }
+  }
+  return agents;
+}
+
+function reap(agentId) {
+  try {
+    fs.unlinkSync(liveFileFor(agentId));
+  } catch {
+    /* already gone, or not ours to remove */
+  }
+  descriptions.delete(agentId);
 }
 
 function liveAgents(now = Date.now()) {
   const agents = [];
-  for (const agent of liveStartEvents(now)) {
+
+  for (const agent of readLiveFiles()) {
+    if (now - lastActiveAt(agent) > SILENT_FOR_MS) {
+      reap(agent.agent_id);
+      continue;
+    }
     agents.push({
       id: agent.agent_id,
       type: agent.agent_type || 'agent',
       description: describe(agent) || 'working…',
       cwd: agent.cwd,
       project: agent.cwd ? agent.cwd.split(/[\\/]/).filter(Boolean).pop() : null,
-      startedAt: agent.ts,
+      startedAt: agent.startedAt,
     });
   }
 
-  agents.sort((a, b) => a.startedAt - b.startedAt);
+  // Ties are the common case — a fan-out starts several agents in one
+  // millisecond — so break them on id to keep row order stable.
+  agents.sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id));
   return agents;
 }
 
-/**
- * The log grows forever otherwise. Safe only at startup, when this process is
- * the sole writer we know of; mid-session compaction would race the hooks.
- */
-function compactIfLarge() {
-  try {
-    if (fs.statSync(EVENT_LOG).size < COMPACT_ABOVE_BYTES) return;
-  } catch {
-    return;
-  }
-  // Keep the start events verbatim. Rebuilding them from the reduced view would
-  // drop session_id and transcript_path, and without those the description can
-  // never be resolved again — a survivor would read "working…" forever.
-  const kept = liveStartEvents()
-    .map((ev) => JSON.stringify(ev))
-    .join('\n');
-  fs.writeFileSync(EVENT_LOG, kept ? kept + '\n' : '');
-}
-
-module.exports = { liveAgents, compactIfLarge, EVENT_LOG };
+module.exports = { liveAgents };

@@ -4,10 +4,10 @@
 /**
  * Claude Code hook target for SubagentStart / SubagentStop.
  *
- * Reads the hook payload as JSON on stdin and appends a single line to the
- * event log. It deliberately does no reading, reducing, or rewriting of the
- * log: several subagents can start at the same instant, and a read-modify-write
- * of a shared file would race. A lone O_APPEND write of a short line does not.
+ * Reads the hook payload as JSON on stdin. A start creates one small file named
+ * after the agent; a stop deletes it. The set of live agents is therefore just
+ * the contents of a directory — there is no shared file for concurrent spawns to
+ * race on, and nothing to compact.
  *
  * This runs on the critical path of every subagent spawn, so it stays minimal
  * and always exits 0 — a monitor must never be able to break the thing it
@@ -15,8 +15,13 @@
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { DATA_DIR, EVENT_LOG } = require('./paths');
+const { LIVE_DIR, liveFileFor } = require('./paths');
+
+// Deliberately not under DATA_DIR: an unwritable DATA_DIR is the likeliest thing
+// to need reporting, and a breadcrumb we cannot write is no breadcrumb at all.
+const ERROR_LOG = path.join(os.tmpdir(), 'claude-agent-ui-hook-errors.log');
 
 function main(raw) {
   let payload;
@@ -26,21 +31,34 @@ function main(raw) {
     return; // Not JSON; nothing useful to record.
   }
 
-  const event = payload.hook_event_name;
-  if (event !== 'SubagentStart' && event !== 'SubagentStop') return;
+  // JSON.parse("null") succeeds, as does any bare literal.
+  if (!payload || typeof payload !== 'object') return;
 
-  const line = JSON.stringify({
-    ts: Date.now(),
-    event,
-    agent_id: payload.agent_id,
+  const { hook_event_name: event, agent_id: agentId } = payload;
+  if (!agentId) return;
+
+  if (event === 'SubagentStop') {
+    try {
+      fs.unlinkSync(liveFileFor(agentId));
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err; // Already gone is the happy path.
+    }
+    return;
+  }
+
+  if (event !== 'SubagentStart') return;
+
+  const record = JSON.stringify({
+    startedAt: Date.now(),
+    agent_id: agentId,
     agent_type: payload.agent_type,
     session_id: payload.session_id,
     cwd: payload.cwd,
     transcript_path: payload.transcript_path,
   });
 
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.appendFileSync(EVENT_LOG, line + '\n');
+  fs.mkdirSync(LIVE_DIR, { recursive: true });
+  fs.writeFileSync(liveFileFor(agentId), record);
 }
 
 let stdin = '';
@@ -48,15 +66,15 @@ process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => {
   stdin += chunk;
 });
+
 process.stdin.on('end', () => {
   try {
     main(stdin);
   } catch (err) {
     // Never fail the spawn we are observing. Leave a breadcrumb and move on.
     try {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
       fs.appendFileSync(
-        path.join(DATA_DIR, 'hook-errors.log'),
+        ERROR_LOG,
         `${new Date().toISOString()} ${err && err.stack ? err.stack : err}\n`
       );
     } catch {
@@ -65,3 +83,12 @@ process.stdin.on('end', () => {
   }
   process.exit(0);
 });
+
+// An unhandled 'error' on stdin is rethrown as an uncaught exception, which would
+// exit non-zero and surface as a hook failure. The payload is unreadable by then,
+// so there is nothing to salvage — just leave quietly.
+process.stdin.on('error', () => process.exit(0));
+
+// If stdin is never closed, 'end' never fires and this process would sit on the
+// critical path of a subagent spawn until Claude Code's hook timeout killed it.
+setTimeout(() => process.exit(0), 5000).unref();

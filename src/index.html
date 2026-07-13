@@ -172,6 +172,7 @@
       const cardEl = document.getElementById('card');
 
       let agents = [];
+      let lastHeight = 0;
 
       function elapsed(startedAt) {
         const secs = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
@@ -226,7 +227,13 @@
           })
         );
 
-        window.monitor.resize(cardEl.getBoundingClientRect().height);
+        // Only when it actually changes: this runs every second, and each resize
+        // is an IPC round trip plus a real compositor operation.
+        const height = cardEl.getBoundingClientRect().height;
+        if (height !== lastHeight) {
+          lastHeight = height;
+          window.monitor.resize(height);
+        }
       }
 
       window.monitor.onAgents((next) => {
