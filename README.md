@@ -21,30 +21,53 @@ Works on Windows 10/11 and macOS.
 
 ## Install
 
+Grab the installer from [Releases](https://github.com/Software-Bridge/claude-agent-ui/releases),
+run the app, and press **Connect** — that registers the hooks. Then restart Claude Code (or run
+`/hooks`) so it picks them up. No Node.js required: the app carries its own.
+
+Drag the window by its header; it remembers where you put it. Click `×` to quit.
+
+The builds are not code-signed yet, so the OS will warn you the first time:
+
+- **Windows** — SmartScreen shows "Windows protected your PC": *More info* → *Run anyway*.
+- **macOS** — Gatekeeper refuses a downloaded app: right-click the app → *Open* → *Open*.
+
+## Running from source
+
 Requires [Node.js](https://nodejs.org) 18+.
 
 ```sh
 npm install
-npm run install-hooks
-```
-
-`install-hooks` merges `SubagentStart` and `SubagentStop` hooks into your global
-`~/.claude/settings.json`, leaving any hooks you already have untouched. Open `/hooks` in
-Claude Code (or restart it) to pick up the change.
-
-Then run the window:
-
-```sh
+npm run install-hooks   # or just press Connect in the window
 npm start
 ```
 
-Drag it by its header; it remembers where you put it. Click `×` to quit.
-
-To remove the hooks again:
+`install-hooks` merges `SubagentStart` and `SubagentStop` hooks into your global
+`~/.claude/settings.json`, leaving any hooks you already have untouched. To remove them again:
 
 ```sh
 npm run uninstall-hooks
 ```
+
+## Building
+
+```sh
+npm run pack   # unpacked app in dist/, for a quick smoke test
+npm run dist   # installers
+```
+
+macOS builds must be made on macOS (`hdiutil`, and signing needs a real keychain). On Windows,
+electron-builder has to extract a signing toolchain that contains symlinks, which the OS only
+permits for administrators — so the *first* build needs an elevated shell or Developer Mode
+enabled. Once its cache is populated, ordinary builds work.
+
+Two targets are deliberately absent, because both are quietly fatal to the way the hook runs:
+
+- **A Windows `portable` exe** self-extracts to a temp directory on each run, so the path it
+  reports for itself stops existing the moment it closes — the shim below would be written stale
+  by construction.
+- **A Mac App Store build** is sandboxed and strips `ELECTRON_RUN_AS_NODE`, which is exactly how
+  the app runs its own hook. It also could not write to `~/.claude/settings.json`.
 
 ## How it works
 

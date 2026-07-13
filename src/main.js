@@ -1,10 +1,11 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, screen, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, screen, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { DATA_DIR } = require('./paths');
 const { liveAgents } = require('./live-agents');
+const { installHooks, hooksInstalled, writeShim } = require('./hooks-config');
 
 const POLL_MS = 400;
 const WIDTH = 340;
@@ -117,11 +118,40 @@ function push(force = false) {
 // Two overlays would sit on top of each other and fight over the saved position.
 if (!app.requestSingleInstanceLock()) app.quit();
 
+function sendStatus() {
+  if (win && !win.isDestroyed()) win.webContents.send('connected', hooksInstalled());
+}
+
 app.whenReady().then(() => {
+  // The app binary moves — a user drags it out of Downloads, an installer
+  // replaces it on update — so the shim is rewritten from wherever we are now.
+  // Doing it on every launch is what makes the wiring self-healing.
+  if (hooksInstalled()) {
+    try {
+      writeShim();
+    } catch {
+      /* the existing shim may still be fine; not worth failing to start over */
+    }
+  }
+
   // Registered before the window exists, so the renderer's 'ready' cannot race
   // the handler into place.
-  ipcMain.on('ready', () => push(true));
+  ipcMain.on('ready', () => {
+    push(true);
+    sendStatus();
+  });
   ipcMain.on('quit', () => app.quit());
+
+  // Editing the user's global Claude Code config is not something to do behind
+  // their back, so it happens only when they ask for it in the window.
+  ipcMain.on('connect', () => {
+    try {
+      installHooks();
+    } catch (err) {
+      dialog.showErrorBox('Could not connect to Claude Code', err.message);
+    }
+    sendStatus();
+  });
   ipcMain.on('resize', (_e, height) => {
     if (!win || win.isDestroyed()) return;
     if (!Number.isFinite(height)) return;

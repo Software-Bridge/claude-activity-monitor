@@ -174,6 +174,35 @@
         color: var(--faint);
         text-align: center;
       }
+
+      #setup {
+        padding: 13px 14px 14px;
+        text-align: center;
+      }
+      #setup p {
+        font-size: 11.5px;
+        line-height: 1.45;
+        color: var(--muted);
+        margin-bottom: 10px;
+      }
+      #connect {
+        -webkit-app-region: no-drag;
+        background: var(--accent-wash);
+        border: 1px solid rgba(var(--accent-rgb), 0.4);
+        color: var(--accent-soft);
+        font: inherit;
+        font-size: 11.5px;
+        font-weight: 600;
+        padding: 5px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      #connect:hover { background: rgba(var(--accent-rgb), 0.28); }
+      #hint {
+        margin-top: 9px;
+        font-size: 10.5px;
+        color: var(--faint);
+      }
     </style>
   </head>
   <body>
@@ -186,16 +215,25 @@
       </header>
       <div id="list"></div>
       <div id="empty">Waiting for Claude subagents…</div>
+      <div id="setup" hidden>
+        <p>Not connected to Claude Code yet.</p>
+        <button id="connect">Connect</button>
+        <div id="hint">Adds subagent hooks to your Claude Code settings.</div>
+      </div>
     </div>
 
     <script>
       const listEl = document.getElementById('list');
       const emptyEl = document.getElementById('empty');
+      const setupEl = document.getElementById('setup');
+      const hintEl = document.getElementById('hint');
       const countEl = document.getElementById('count');
       const dotEl = document.getElementById('dot');
       const cardEl = document.getElementById('card');
 
       let agents = [];
+      let connected = true; // Assume yes until told otherwise, so the panel never flashes.
+      let justConnected = false;
       let lastHeight = 0;
 
       function elapsed(startedAt) {
@@ -208,9 +246,10 @@
 
       function render() {
         const n = agents.length;
-        countEl.textContent = n === 0 ? 'idle' : n + (n === 1 ? ' agent' : ' agents');
+        countEl.textContent = !connected ? 'setup' : n === 0 ? 'idle' : n + (n === 1 ? ' agent' : ' agents');
         dotEl.classList.toggle('active', n > 0);
-        emptyEl.style.display = n === 0 ? 'block' : 'none';
+        setupEl.hidden = connected && !justConnected;
+        emptyEl.style.display = connected && !justConnected && n === 0 ? 'block' : 'none';
 
         listEl.replaceChildren(
           ...agents.map((a) => {
@@ -264,6 +303,25 @@
         render();
       });
 
+      window.monitor.onConnected((ok) => {
+        // Claude Code only rereads its hook config on /hooks or a restart, so
+        // hold the panel open long enough to say so — otherwise it vanishes and
+        // the user is left watching a window that stays empty.
+        if (ok && !connected) {
+          document.getElementById('setup').querySelector('p').textContent = 'Connected.';
+          document.getElementById('connect').hidden = true;
+          hintEl.textContent = 'Restart Claude Code, or run /hooks, to pick it up.';
+          justConnected = true;
+          setTimeout(() => {
+            justConnected = false;
+            render();
+          }, 8000);
+        }
+        connected = ok;
+        render();
+      });
+
+      document.getElementById('connect').addEventListener('click', () => window.monitor.connect());
       document.getElementById('close').addEventListener('click', () => window.monitor.quit());
 
       // Keep the elapsed counters ticking between pushes from the main process.

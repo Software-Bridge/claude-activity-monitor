@@ -1,8 +1,9 @@
 {
   "name": "claude-agent-ui",
   "version": "0.1.0",
-  "description": "A small always-on-top window showing which Claude Code subagents are running right now.",
+  "description": "A small always-on-top window showing which Claude Code subagents are running.",
   "license": "MIT",
+  "author": "Software-Bridge",
   "repository": {
     "type": "git",
     "url": "https://github.com/Software-Bridge/claude-agent-ui.git"
@@ -11,9 +12,62 @@
   "scripts": {
     "start": "electron .",
     "install-hooks": "node scripts/install-hooks.js",
-    "uninstall-hooks": "node scripts/install-hooks.js --remove"
+    "uninstall-hooks": "node scripts/install-hooks.js --remove",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
   },
   "devDependencies": {
-    "electron": "^43.1.0"
+    "electron": "^43.1.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.software-bridge.claude-agent-ui",
+    "productName": "Claude Agent Monitor",
+    "copyright": "Copyright (c) 2026 Software-Bridge",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "src/hook.js",
+      "src/paths.js"
+    ],
+    "npmRebuild": false,
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-${version}-setup.${ext}"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "extendInfo": {
+        "LSUIElement": true
+      }
+    }
   }
 }

@@ -28,7 +28,8 @@ const fwd = (p) => (typeof p === 'string' ? p.replace(/\\/g, '/') : p);
 function main(raw) {
   let payload;
   try {
-    payload = JSON.parse(raw);
+    // Some shells hand us a UTF-8 BOM, which JSON.parse rejects outright.
+    payload = JSON.parse(raw.replace(/^﻿/, ''));
   } catch {
     return; // Not JSON; nothing useful to record.
   }
