@@ -7,14 +7,14 @@ and `subagentStatusLine` are all terminal-bound. This is a frameless card you pa
 of the screen, driven by Claude Code hooks.
 
 ```
-┌──────────────────────────────┐
-│ ● 2 agents running        ×  │
-├──────────────────────────────┤
-│ │ Audit the payment module   │
-│ │ Explore  my-api      1m 4s │
-│ │ Find the flaky test        │
-│ │ Plan     my-api         12s│
-└──────────────────────────────┘
+┌────────────────────────────────────────┐
+│ ● Claude Agent Monitor     2 agents  × │
+├────────────────────────────────────────┤
+│  │ Audit the payment module            │
+│  │ Explore  my-api               1m 4s │
+│  │ Find the flaky test                 │
+│  │ Plan     my-api                 12s │
+└────────────────────────────────────────┘
 ```
 
 Works on Windows 10/11 and macOS.
@@ -54,7 +54,7 @@ SubagentStop   ->  src/hook.js deletes it
                      └─> the window lists that directory every 400ms and re-renders
 ```
 
-Three details are load-bearing:
+Four details are load-bearing:
 
 **The live set is a directory, not a counter and not a log.** A counter would drift
 permanently out of sync the first time an agent was killed without firing `SubagentStop`.
