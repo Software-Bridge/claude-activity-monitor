@@ -6,15 +6,23 @@
     <title>Claude Agents</title>
     <style>
       :root {
+        /* Kept as raw channels so one hue can be reused at several alphas —
+           rgba() cannot take a var() colour. */
+        --line-rgb: 148, 176, 219;
+        --accent-rgb: 232, 149, 111;
+
         --bg: rgba(38, 52, 77, 0.94);
         --bg-header: rgba(51, 68, 97, 0.6);
-        --border: rgba(148, 176, 219, 0.18);
-        --rule: rgba(148, 176, 219, 0.1);
+        --border: rgba(var(--line-rgb), 0.18);
+        --rule: rgba(var(--line-rgb), 0.1);
+        --scrollbar: rgba(var(--line-rgb), 0.25);
         --hover: rgba(191, 214, 245, 0.1);
         --text: #eef3fa;
         --muted: #b3c4dc;
         --faint: #8199b8;
-        --accent: #e8956f;
+        --accent: rgb(var(--accent-rgb));
+        --accent-wash: rgba(var(--accent-rgb), 0.18);
+        --accent-soft: #f0b294;
       }
 
       * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -98,7 +106,7 @@
       #list { max-height: 320px; overflow-y: auto; }
       #list::-webkit-scrollbar { width: 6px; }
       #list::-webkit-scrollbar-thumb {
-        background: rgba(148, 176, 219, 0.25);
+        background: var(--scrollbar);
         border-radius: 3px;
       }
 
@@ -138,8 +146,8 @@
       }
 
       .type {
-        background: rgba(232, 149, 111, 0.18);
-        color: #f0b294;
+        background: var(--accent-wash);
+        color: var(--accent-soft);
         padding: 1px 5px;
         border-radius: 4px;
         font-weight: 600;
