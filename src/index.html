@@ -1,0 +1,246 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
+    <title>Claude Agents</title>
+    <style>
+      :root {
+        --bg: rgba(24, 24, 27, 0.92);
+        --border: rgba(255, 255, 255, 0.1);
+        --text: #f4f4f5;
+        --muted: #a1a1aa;
+        --faint: #71717a;
+        --accent: #d97757;
+      }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+
+      body {
+        background: transparent;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        color: var(--text);
+        user-select: none;
+        overflow: hidden;
+      }
+
+      #card {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        backdrop-filter: blur(12px);
+        overflow: hidden;
+      }
+
+      header {
+        -webkit-app-region: drag;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 10px 9px 12px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      #dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--faint);
+        flex: none;
+      }
+      #dot.active {
+        background: var(--accent);
+        animation: pulse 1.6s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.35; }
+      }
+
+      #title {
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        flex: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      #close {
+        -webkit-app-region: no-drag;
+        background: none;
+        border: none;
+        color: var(--faint);
+        font-size: 15px;
+        line-height: 1;
+        cursor: pointer;
+        padding: 2px 4px;
+        border-radius: 4px;
+      }
+      #close:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
+
+      #list { max-height: 320px; overflow-y: auto; }
+      #list::-webkit-scrollbar { width: 6px; }
+      #list::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.14);
+        border-radius: 3px;
+      }
+
+      .agent {
+        display: flex;
+        gap: 9px;
+        padding: 9px 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      }
+      .agent:last-child { border-bottom: none; }
+
+      .bar {
+        width: 2px;
+        border-radius: 1px;
+        background: var(--accent);
+        opacity: 0.75;
+        flex: none;
+      }
+
+      .body { min-width: 0; flex: 1; }
+
+      .desc {
+        font-size: 12px;
+        line-height: 1.35;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .meta {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 3px;
+        font-size: 10.5px;
+        color: var(--muted);
+      }
+
+      .type {
+        background: rgba(217, 119, 87, 0.16);
+        color: #e8a184;
+        padding: 1px 5px;
+        border-radius: 4px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      .project {
+        color: var(--faint);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .elapsed {
+        margin-left: auto;
+        color: var(--faint);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      #empty {
+        padding: 14px 12px;
+        font-size: 11.5px;
+        color: var(--faint);
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="card">
+      <header>
+        <span id="dot"></span>
+        <span id="title">No agents running</span>
+        <button id="close" title="Quit">&times;</button>
+      </header>
+      <div id="list"></div>
+      <div id="empty">Waiting for Claude subagents…</div>
+    </div>
+
+    <script>
+      const listEl = document.getElementById('list');
+      const emptyEl = document.getElementById('empty');
+      const titleEl = document.getElementById('title');
+      const dotEl = document.getElementById('dot');
+      const cardEl = document.getElementById('card');
+
+      let agents = [];
+
+      function elapsed(startedAt) {
+        const secs = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+        if (secs < 60) return secs + 's';
+        const mins = Math.floor(secs / 60);
+        if (mins < 60) return mins + 'm ' + (secs % 60) + 's';
+        return Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm';
+      }
+
+      function render() {
+        const n = agents.length;
+        titleEl.textContent =
+          n === 0 ? 'No agents running' : n + (n === 1 ? ' agent running' : ' agents running');
+        dotEl.classList.toggle('active', n > 0);
+        emptyEl.style.display = n === 0 ? 'block' : 'none';
+
+        listEl.replaceChildren(
+          ...agents.map((a) => {
+            const row = document.createElement('div');
+            row.className = 'agent';
+
+            const bar = document.createElement('div');
+            bar.className = 'bar';
+
+            const body = document.createElement('div');
+            body.className = 'body';
+
+            const desc = document.createElement('div');
+            desc.className = 'desc';
+            desc.textContent = a.description;
+            desc.title = a.description;
+
+            const meta = document.createElement('div');
+            meta.className = 'meta';
+
+            const type = document.createElement('span');
+            type.className = 'type';
+            type.textContent = a.type;
+
+            const project = document.createElement('span');
+            project.className = 'project';
+            project.textContent = a.project || '';
+
+            const time = document.createElement('span');
+            time.className = 'elapsed';
+            time.textContent = elapsed(a.startedAt);
+
+            meta.append(type, project, time);
+            body.append(desc, meta);
+            row.append(bar, body);
+            return row;
+          })
+        );
+
+        window.monitor.resize(cardEl.getBoundingClientRect().height);
+      }
+
+      window.monitor.onAgents((next) => {
+        agents = next;
+        render();
+      });
+
+      document.getElementById('close').addEventListener('click', () => window.monitor.quit());
+
+      // Keep the elapsed counters ticking between pushes from the main process.
+      setInterval(render, 1000);
+
+      window.monitor.ready();
+      render();
+    </script>
+  </body>
+</html>

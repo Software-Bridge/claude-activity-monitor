@@ -1,0 +1,10 @@
+# Throwaway hook payload dumps used to verify the real stdin schema
+.dev/
+
+.claude/settings.local.json
+
+node_modules/
+dist/
+out/
+*.log
+.DS_Store

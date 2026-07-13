@@ -1,0 +1,19 @@
+{
+  "name": "claude-agent-ui",
+  "version": "0.1.0",
+  "description": "A small always-on-top window showing which Claude Code subagents are running right now.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Software-Bridge/claude-agent-ui.git"
+  },
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "install-hooks": "node scripts/install-hooks.js",
+    "uninstall-hooks": "node scripts/install-hooks.js --remove"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}
