@@ -6,12 +6,15 @@
     <title>Claude Agents</title>
     <style>
       :root {
-        --bg: rgba(24, 24, 27, 0.92);
-        --border: rgba(255, 255, 255, 0.1);
-        --text: #f4f4f5;
-        --muted: #a1a1aa;
-        --faint: #71717a;
-        --accent: #d97757;
+        --bg: rgba(38, 52, 77, 0.94);
+        --bg-header: rgba(51, 68, 97, 0.6);
+        --border: rgba(148, 176, 219, 0.18);
+        --rule: rgba(148, 176, 219, 0.1);
+        --hover: rgba(191, 214, 245, 0.1);
+        --text: #eef3fa;
+        --muted: #b3c4dc;
+        --faint: #8199b8;
+        --accent: #e8956f;
       }
 
       * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -38,6 +41,7 @@
         align-items: center;
         gap: 8px;
         padding: 9px 10px 9px 12px;
+        background: var(--bg-header);
         border-bottom: 1px solid var(--border);
       }
 
@@ -67,6 +71,17 @@
         text-overflow: ellipsis;
       }
 
+      /* The count moves here so the header can carry the app name without
+         losing the one number the window exists to show. */
+      #count {
+        font-size: 10.5px;
+        font-weight: 600;
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        flex: none;
+      }
+
       #close {
         -webkit-app-region: no-drag;
         background: none;
@@ -78,12 +93,12 @@
         padding: 2px 4px;
         border-radius: 4px;
       }
-      #close:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
+      #close:hover { color: var(--text); background: var(--hover); }
 
       #list { max-height: 320px; overflow-y: auto; }
       #list::-webkit-scrollbar { width: 6px; }
       #list::-webkit-scrollbar-thumb {
-        background: rgba(255, 255, 255, 0.14);
+        background: rgba(148, 176, 219, 0.25);
         border-radius: 3px;
       }
 
@@ -91,7 +106,7 @@
         display: flex;
         gap: 9px;
         padding: 9px 12px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        border-bottom: 1px solid var(--rule);
       }
       .agent:last-child { border-bottom: none; }
 
@@ -123,8 +138,8 @@
       }
 
       .type {
-        background: rgba(217, 119, 87, 0.16);
-        color: #e8a184;
+        background: rgba(232, 149, 111, 0.18);
+        color: #f0b294;
         padding: 1px 5px;
         border-radius: 4px;
         font-weight: 600;
@@ -157,7 +172,8 @@
     <div id="card">
       <header>
         <span id="dot"></span>
-        <span id="title">No agents running</span>
+        <span id="title">Claude Agent Monitor</span>
+        <span id="count">idle</span>
         <button id="close" title="Quit">&times;</button>
       </header>
       <div id="list"></div>
@@ -167,7 +183,7 @@
     <script>
       const listEl = document.getElementById('list');
       const emptyEl = document.getElementById('empty');
-      const titleEl = document.getElementById('title');
+      const countEl = document.getElementById('count');
       const dotEl = document.getElementById('dot');
       const cardEl = document.getElementById('card');
 
@@ -184,8 +200,7 @@
 
       function render() {
         const n = agents.length;
-        titleEl.textContent =
-          n === 0 ? 'No agents running' : n + (n === 1 ? ' agent running' : ' agents running');
+        countEl.textContent = n === 0 ? 'idle' : n + (n === 1 ? ' agent' : ' agents');
         dotEl.classList.toggle('active', n > 0);
         emptyEl.style.display = n === 0 ? 'block' : 'none';
 
