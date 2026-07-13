@@ -112,6 +112,11 @@ the Node binary it ran under to avoid this; if you later move or upgrade Node, r
 `npm run install-hooks`. Any hook crash is recorded in
 `<tmp>/claude-agent-ui-hook-errors.log`.
 
+**The window stays empty under WSL, a devcontainer, or a snap/flatpak Electron.** The hook and
+the window are separate processes, and in those setups they resolve different home
+directories — so the hook writes somewhere the window never looks. Point both at the same
+place with `CLAUDE_AGENT_UI_DIR`.
+
 **`TypeError: Cannot read properties of undefined (reading 'whenReady')`.** Something in your
 environment has set `ELECTRON_RUN_AS_NODE=1` (VSCode's integrated terminal and extension host
 both do), which makes Electron boot as plain Node. Clear it and start again:
