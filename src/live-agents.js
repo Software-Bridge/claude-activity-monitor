@@ -1,12 +1,22 @@
 'use strict';
 
 /**
- * The live set is whatever is in LIVE_DIR, minus anything that has gone quiet.
+ * The live picture is a set of Claude Code sessions, each with its own state and
+ * whatever subagents it has spawned. Subagents come from LIVE_DIR (one file each,
+ * created and unlinked by their own hooks); sessions come from SESSIONS_DIR (one
+ * mutable file each, rewritten by the session's hooks). This module reads both
+ * and stitches them together by session_id.
  */
 
 const fs = require('fs');
 const path = require('path');
-const { LIVE_DIR, subagentDir, metaPathFor, transcriptPathFor } = require('./paths');
+const {
+  LIVE_DIR,
+  SESSIONS_DIR,
+  subagentDir,
+  metaPathFor,
+  transcriptPathFor,
+} = require('./paths');
 
 /**
  * A killed agent never fires SubagentStop, so its file is never removed. Rather
@@ -20,11 +30,30 @@ const { LIVE_DIR, subagentDir, metaPathFor, transcriptPathFor } = require('./pat
  */
 const SILENT_FOR_MS = 10 * 60 * 1000;
 
+/**
+ * A session that has finished its turn is "awaiting feedback": shown, badged, and
+ * kept for a short grace period so a reply that lands quickly slots it straight
+ * back to working. Sit silent past the grace and it is "completely idle" — pulled
+ * from the window until something happens in it again.
+ */
+const WAITING_GRACE_MS = 60 * 1000;
+
+/**
+ * A session still marked "working" but silent this long has died without a Stop —
+ * a crash, a closed terminal. Give it the same long benefit of the doubt a
+ * subagent gets before dropping it.
+ */
+const WORKING_SILENT_MS = SILENT_FOR_MS;
+
 /** Long past the point where a file could belong to anything still running. */
 const GARBAGE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 // The description is immutable once written, so it is worth never re-reading.
 const descriptions = new Map();
+
+function projectOf(cwd) {
+  return cwd ? cwd.split(/[\\/]/).filter(Boolean).pop() : null;
+}
 
 function describe(agent) {
   const cached = descriptions.get(agent.agent_id);
@@ -93,22 +122,22 @@ function discardIfGarbage(file, now) {
   }
 }
 
-function readLiveFiles(now) {
+function readRecords(dir, now) {
   let names;
   try {
-    names = fs.readdirSync(LIVE_DIR);
+    names = fs.readdirSync(dir);
   } catch {
     return []; // No directory yet: nothing has ever started.
   }
 
-  const agents = [];
+  const out = [];
   for (const name of names) {
     if (!name.endsWith('.json')) continue;
-    const file = path.join(LIVE_DIR, name);
+    const file = path.join(dir, name);
 
-    let agent;
+    let record;
     try {
-      agent = JSON.parse(fs.readFileSync(file, 'utf8'));
+      record = JSON.parse(fs.readFileSync(file, 'utf8'));
     } catch {
       // Mid-write, or truncated by a killed hook. Retry next poll; only sweep it
       // once it is far too old to be a file anyone is still writing.
@@ -116,24 +145,28 @@ function readLiveFiles(now) {
       continue;
     }
 
-    // A record without these cannot be aged, and NaN comparisons fail open —
-    // which would make it an immortal row. Treat it as garbage, not as an agent.
-    if (!agent || !agent.agent_id || !Number.isFinite(agent.startedAt)) {
+    if (!record || typeof record !== 'object') {
       discardIfGarbage(file, now);
       continue;
     }
-
-    agent.file = file;
-    agents.push(agent);
+    record.file = file;
+    out.push(record);
   }
-  return agents;
+  return out;
 }
 
-function liveAgents(now = Date.now()) {
+/** The live subagents, keyed for grouping under the session that spawned them. */
+function readAgents(now) {
   const agents = [];
   const seen = new Set();
 
-  for (const agent of readLiveFiles(now)) {
+  for (const agent of readRecords(LIVE_DIR, now)) {
+    // A record without these cannot be aged, and NaN comparisons fail open —
+    // which would make it an immortal row. Treat it as garbage, not as an agent.
+    if (!agent.agent_id || !Number.isFinite(agent.startedAt)) {
+      discardIfGarbage(agent.file, now);
+      continue;
+    }
     seen.add(agent.agent_id);
 
     const { at, known } = lastActiveAt(agent);
@@ -151,8 +184,9 @@ function liveAgents(now = Date.now()) {
       type: agent.agent_type || 'agent',
       description: describe(agent) || 'working…',
       cwd: agent.cwd,
-      project: agent.cwd ? agent.cwd.split(/[\\/]/).filter(Boolean).pop() : null,
+      project: projectOf(agent.cwd),
       startedAt: agent.startedAt,
+      session_id: agent.session_id || null,
     });
   }
 
@@ -162,10 +196,115 @@ function liveAgents(now = Date.now()) {
     if (!seen.has(id)) descriptions.delete(id);
   }
 
-  // Ties are the common case — a fan-out starts several agents in one
-  // millisecond — so break them on id to keep row order stable.
-  agents.sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id));
   return agents;
 }
 
-module.exports = { liveAgents };
+/** A session's transcript grows while it works, so its mtime is real liveness. */
+function sessionLastActive(s) {
+  let at = Number.isFinite(s.updatedAt) ? s.updatedAt : s.startedAt || 0;
+  if (typeof s.transcript_path === 'string' && path.isAbsolute(s.transcript_path)) {
+    try {
+      at = Math.max(at, fs.statSync(s.transcript_path).mtimeMs);
+    } catch {
+      /* transcript gone or not there yet — the hook timestamp stands */
+    }
+  }
+  return at;
+}
+
+/**
+ * The live sessions, each reaped on its own clock: a working session gets the
+ * long dead-crash window, a waiting one only the short feedback grace. A session
+ * with live agents is never reaped — its own children are proof it is alive.
+ */
+function readSessions(now, agentSessionIds) {
+  const sessions = [];
+
+  for (const s of readRecords(SESSIONS_DIR, now)) {
+    if (!s.session_id || !Number.isFinite(s.startedAt)) {
+      discardIfGarbage(s.file, now);
+      continue;
+    }
+
+    const at = sessionLastActive(s);
+    const quietFor = now - at;
+    const working = s.state === 'working';
+    const hasAgents = agentSessionIds.has(s.session_id);
+
+    const limit = working ? WORKING_SILENT_MS : WAITING_GRACE_MS;
+    if (!hasAgents && quietFor > limit) {
+      // Idle past its grace (or a working session gone silent for good). Unlike a
+      // subagent this file is ours to remove: nothing else will, and a stale one
+      // would otherwise linger the full garbage day.
+      discard(s.file);
+      continue;
+    }
+
+    sessions.push({
+      id: s.session_id,
+      cwd: s.cwd,
+      project: projectOf(s.cwd),
+      title: s.title || null,
+      state: working ? 'working' : 'waiting',
+      waiting: working ? null : s.waiting || 'turn',
+      activity: s.activity && typeof s.activity === 'object' ? s.activity : null,
+      startedAt: s.startedAt,
+      agents: [],
+    });
+  }
+
+  return sessions;
+}
+
+/**
+ * Subagents can outlive — or precede — a session record: the session hooks may
+ * not be installed, or the file may have been reaped while a long agent runs on.
+ * Rather than drop the agent, stand up a minimal section for it so it still shows.
+ */
+function syntheticSession(agent) {
+  return {
+    id: agent.session_id || `agent:${agent.id}`,
+    cwd: agent.cwd,
+    project: agent.project,
+    title: null,
+    state: 'working',
+    waiting: null,
+    activity: null,
+    startedAt: agent.startedAt,
+    agents: [],
+    synthetic: true,
+  };
+}
+
+function liveState(now = Date.now()) {
+  const agents = readAgents(now);
+  const agentSessionIds = new Set(agents.map((a) => a.session_id).filter(Boolean));
+
+  const byId = new Map();
+  for (const session of readSessions(now, agentSessionIds)) byId.set(session.id, session);
+
+  for (const agent of agents) {
+    let session = agent.session_id && byId.get(agent.session_id);
+    if (!session) {
+      session = syntheticSession(agent);
+      byId.set(session.id, session);
+    }
+    session.agents.push(agent);
+  }
+
+  const sessions = [...byId.values()];
+
+  // Oldest agent first within a section — a fan-out that starts several in one
+  // millisecond breaks the tie on id so the order never jitters.
+  for (const session of sessions) {
+    session.agents.sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id));
+  }
+
+  // Busiest sections first: working above waiting, then oldest session first.
+  const rank = (s) => (s.state === 'working' ? 0 : 1);
+  sessions.sort((a, b) => rank(a) - rank(b) || a.startedAt - b.startedAt || a.id.localeCompare(b.id));
+
+  return sessions;
+}
+
+module.exports = { liveState };

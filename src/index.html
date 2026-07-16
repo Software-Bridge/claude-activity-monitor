@@ -3,18 +3,22 @@
   <head>
     <meta charset="utf-8" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
-    <title>Claude Agents</title>
+    <title>Claude Activity Monitor</title>
     <style>
       :root {
         /* Kept as raw channels so one hue can be reused at several alphas —
            rgba() cannot take a var() colour. */
         --line-rgb: 148, 176, 219;
         --accent-rgb: 232, 149, 111;
+        /* Awaiting feedback: an amber that reads as "your move", distinct from
+           the orange the tool uses for active work. */
+        --wait-rgb: 240, 199, 122;
+        /* Needs permission: a warmer alert tone for the one state you must act on. */
+        --alert-rgb: 233, 132, 132;
 
         --bg: rgba(38, 52, 77, 0.94);
         --bg-header: rgba(51, 68, 97, 0.6);
         --border: rgba(var(--line-rgb), 0.18);
-        --rule: rgba(var(--line-rgb), 0.1);
         --scrollbar: rgba(var(--line-rgb), 0.25);
         --hover: rgba(191, 214, 245, 0.1);
         --text: #eef3fa;
@@ -23,6 +27,8 @@
         --accent: rgb(var(--accent-rgb));
         --accent-wash: rgba(var(--accent-rgb), 0.18);
         --accent-soft: #f0b294;
+        --wait: rgb(var(--wait-rgb));
+        --alert: rgb(var(--alert-rgb));
       }
 
       * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -64,6 +70,7 @@
         background: var(--accent);
         animation: pulse 1.6s ease-in-out infinite;
       }
+      #dot.waiting { background: var(--wait); animation: none; }
       @keyframes pulse {
         0%, 100% { opacity: 1; }
         50% { opacity: 0.35; }
@@ -103,69 +110,93 @@
       }
       #close:hover { color: var(--text); background: var(--hover); }
 
-      #list { max-height: 320px; overflow-y: auto; }
+      #list { max-height: 460px; overflow-y: auto; }
       #list::-webkit-scrollbar { width: 6px; }
       #list::-webkit-scrollbar-thumb {
         background: var(--scrollbar);
         border-radius: 3px;
       }
 
-      .agent {
-        display: flex;
-        gap: 9px;
-        padding: 9px 12px;
-        border-bottom: 1px solid var(--rule);
+      /* One section per Claude Code chat window: a heading, then its agents. */
+      .session {
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 6px;
       }
-      .agent:last-child { border-bottom: none; }
+      .session:last-child { border-bottom: none; }
 
-      .bar {
-        width: 2px;
-        border-radius: 1px;
-        background: var(--accent);
-        opacity: 0.75;
-        flex: none;
-      }
-
-      .body { min-width: 0; flex: 1; }
-
-      .desc {
-        font-size: 12px;
-        line-height: 1.35;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-
-      .meta {
+      .session-head {
         display: flex;
         align-items: center;
-        gap: 6px;
-        margin-top: 3px;
-        font-size: 10.5px;
-        color: var(--muted);
+        gap: 8px;
+        padding: 9px 12px 5px;
       }
-
-      .type {
-        background: var(--accent-wash);
-        color: var(--accent-soft);
-        padding: 1px 5px;
-        border-radius: 4px;
-        font-weight: 600;
-        white-space: nowrap;
+      .state-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex: none;
+        background: var(--faint);
       }
+      .state-dot.working {
+        background: var(--accent);
+        animation: pulse 1.6s ease-in-out infinite;
+      }
+      .state-dot.waiting { background: var(--wait); }
+      .state-dot.permission { background: var(--alert); }
 
-      .project {
-        color: var(--faint);
+      .session-project {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--text);
+        flex: 1;
+        min-width: 0;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
-
-      .elapsed {
-        margin-left: auto;
+      .session-status {
+        font-size: 10.5px;
         color: var(--faint);
         font-variant-numeric: tabular-nums;
         white-space: nowrap;
+        flex: none;
+      }
+      .session-status.waiting { color: var(--wait); font-weight: 600; }
+      .session-status.permission { color: var(--alert); font-weight: 600; }
+
+      /* The live tool line and the subagents share one indent, so they read as a
+         single list hanging off the window heading above them. */
+      .session-activity {
+        padding: 1px 12px 2px 24px;
+        font-size: 10.5px;
+        color: var(--faint);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .session-activity .tool { color: var(--accent-soft); font-weight: 600; }
+
+      .agent {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        padding: 3px 12px 3px 24px;
+      }
+      .agent .desc {
+        font-size: 11.5px;
+        color: var(--muted);
+        flex: 1;
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .agent .elapsed {
+        font-size: 10.5px;
+        color: var(--faint);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        flex: none;
       }
 
       #empty {
@@ -209,16 +240,16 @@
     <div id="card">
       <header>
         <span id="dot"></span>
-        <span id="title">Claude Agent Monitor</span>
+        <span id="title">Claude Activity Monitor</span>
         <span id="count">idle</span>
         <button id="close" title="Quit">&times;</button>
       </header>
       <div id="list"></div>
-      <div id="empty">Waiting for Claude subagents…</div>
+      <div id="empty">Waiting for Claude sessions…</div>
       <div id="setup" hidden>
         <p>Not connected to Claude Code yet.</p>
         <button id="connect">Connect</button>
-        <div id="hint">Adds subagent hooks to your Claude Code settings.</div>
+        <div id="hint">Adds session &amp; subagent hooks to your Claude Code settings.</div>
       </div>
     </div>
 
@@ -231,7 +262,7 @@
       const dotEl = document.getElementById('dot');
       const cardEl = document.getElementById('card');
 
-      let agents = [];
+      let sessions = [];
       let connected = true; // Assume yes until told otherwise, so the panel never flashes.
       let justConnected = false;
       let lastHeight = 0;
@@ -244,50 +275,102 @@
         return Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm';
       }
 
+      // What a waiting session is waiting on, worded for the person who has to act.
+      const WAITING_LABEL = {
+        permission: 'needs permission',
+        idle: 'waiting for you',
+        turn: 'waiting for you',
+        ended: 'ended',
+        new: 'ready',
+      };
+
+      function agentRow(a) {
+        const row = document.createElement('div');
+        row.className = 'agent';
+
+        const desc = document.createElement('span');
+        desc.className = 'desc';
+        desc.textContent = a.description;
+        // Type is off the row now to keep it clean, but kept a hover away.
+        desc.title = a.description + '  ·  ' + a.type;
+
+        const time = document.createElement('span');
+        time.className = 'elapsed';
+        time.textContent = elapsed(a.startedAt);
+
+        row.append(desc, time);
+        return row;
+      }
+
+      function sessionSection(s) {
+        const section = document.createElement('div');
+        section.className = 'session';
+
+        const head = document.createElement('div');
+        head.className = 'session-head';
+
+        const permission = s.state !== 'working' && s.waiting === 'permission';
+        const tone = s.state === 'working' ? 'working' : permission ? 'permission' : 'waiting';
+
+        const dot = document.createElement('span');
+        dot.className = 'state-dot ' + tone;
+
+        const project = document.createElement('span');
+        project.className = 'session-project';
+        project.textContent = s.project || s.title || 'Claude session';
+        project.title = s.cwd || project.textContent;
+
+        const status = document.createElement('span');
+        if (s.state === 'working') {
+          status.className = 'session-status';
+          status.textContent = elapsed(s.startedAt);
+        } else {
+          status.className = 'session-status ' + tone;
+          status.textContent = WAITING_LABEL[s.waiting] || 'waiting for you';
+        }
+
+        head.append(dot, project, status);
+        section.append(head);
+
+        // The live tool line, only while there is one to show.
+        if (s.state === 'working' && (s.activity || s.agents.length === 0)) {
+          const act = document.createElement('div');
+          act.className = 'session-activity';
+          if (s.activity) {
+            const tool = document.createElement('span');
+            tool.className = 'tool';
+            tool.textContent = s.activity.tool;
+            act.append(document.createTextNode('running · '), tool);
+            if (s.activity.detail) {
+              act.append(document.createTextNode(' ' + s.activity.detail));
+              act.title = s.activity.tool + ' · ' + s.activity.detail;
+            }
+          } else {
+            act.textContent = 'working…';
+          }
+          section.append(act);
+        }
+
+        for (const a of s.agents) section.append(agentRow(a));
+        return section;
+      }
+
       function render() {
-        const n = agents.length;
-        countEl.textContent = !connected ? 'setup' : n === 0 ? 'idle' : n + (n === 1 ? ' agent' : ' agents');
-        dotEl.classList.toggle('active', n > 0);
+        const n = sessions.length;
+        const working = sessions.filter((s) => s.state === 'working').length;
+        const waiting = n - working;
+
+        const parts = [];
+        if (working) parts.push(working + ' active');
+        if (waiting) parts.push(waiting + ' waiting');
+        countEl.textContent = !connected ? 'setup' : n === 0 ? 'idle' : parts.join(' · ');
+
+        dotEl.classList.toggle('active', working > 0);
+        dotEl.classList.toggle('waiting', working === 0 && waiting > 0);
         setupEl.hidden = connected && !justConnected;
         emptyEl.style.display = connected && !justConnected && n === 0 ? 'block' : 'none';
 
-        listEl.replaceChildren(
-          ...agents.map((a) => {
-            const row = document.createElement('div');
-            row.className = 'agent';
-
-            const bar = document.createElement('div');
-            bar.className = 'bar';
-
-            const body = document.createElement('div');
-            body.className = 'body';
-
-            const desc = document.createElement('div');
-            desc.className = 'desc';
-            desc.textContent = a.description;
-            desc.title = a.description;
-
-            const meta = document.createElement('div');
-            meta.className = 'meta';
-
-            const type = document.createElement('span');
-            type.className = 'type';
-            type.textContent = a.type;
-
-            const project = document.createElement('span');
-            project.className = 'project';
-            project.textContent = a.project || '';
-
-            const time = document.createElement('span');
-            time.className = 'elapsed';
-            time.textContent = elapsed(a.startedAt);
-
-            meta.append(type, project, time);
-            body.append(desc, meta);
-            row.append(bar, body);
-            return row;
-          })
-        );
+        listEl.replaceChildren(...sessions.map(sessionSection));
 
         // Only when it actually changes: this runs every second, and each resize
         // is an IPC round trip plus a real compositor operation.
@@ -298,8 +381,8 @@
         }
       }
 
-      window.monitor.onAgents((next) => {
-        agents = next;
+      window.monitor.onSessions((next) => {
+        sessions = Array.isArray(next) ? next : [];
         render();
       });
 

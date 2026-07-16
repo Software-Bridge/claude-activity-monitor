@@ -1,7 +1,7 @@
 {
   "name": "claude-agent-ui",
   "version": "0.1.0",
-  "description": "A small always-on-top window showing which Claude Code subagents are running.",
+  "description": "A small always-on-top window showing Claude Code session and subagent activity.",
   "license": "MIT",
   "author": "Software-Bridge",
   "repository": {
@@ -21,8 +21,8 @@
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "com.software-bridge.claude-agent-ui",
-    "productName": "Claude Agent Monitor",
+    "appId": "com.software-bridge.claude-activity-monitor",
+    "productName": "Claude Activity Monitor",
     "copyright": "Copyright (c) 2026 Software-Bridge",
     "files": [
       "src/**/*",

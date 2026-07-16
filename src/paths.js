@@ -21,6 +21,16 @@ const DATA_DIR =
 const LIVE_DIR = path.join(DATA_DIR, 'live');
 
 /**
+ * One file per live Claude Code session (the chat window itself), keyed by
+ * session_id. Unlike the subagent files, this one is mutable: the session's
+ * hooks fire in sequence over its lifetime and each rewrites the record with the
+ * latest state. That is safe because a single session drives its own hooks
+ * serially — the concurrency the per-file scheme guards against is between
+ * different agents, and those land in different files.
+ */
+const SESSIONS_DIR = path.join(DATA_DIR, 'sessions');
+
+/**
  * Ids reach path.join from a hook payload and from file contents. path.join
  * normalizes "..", so an id may not contain a separator — and on Windows that
  * means backslash as well as forward slash, which makes the traversal surface
@@ -31,6 +41,9 @@ const safe = (id) => typeof id === 'string' && SAFE_ID.test(id);
 
 const liveFileFor = (agentId) =>
   safe(agentId) ? path.join(LIVE_DIR, `${agentId}.json`) : null;
+
+const sessionFileFor = (sessionId) =>
+  safe(sessionId) ? path.join(SESSIONS_DIR, `${sessionId}.json`) : null;
 
 /**
  * Claude Code keeps a subagent's files in a directory named after the session,
@@ -67,4 +80,13 @@ function transcriptPathFor(transcriptPath, agentId) {
   return dir && safe(agentId) ? path.join(dir, `agent-${agentId}.jsonl`) : null;
 }
 
-module.exports = { DATA_DIR, LIVE_DIR, liveFileFor, subagentDir, metaPathFor, transcriptPathFor };
+module.exports = {
+  DATA_DIR,
+  LIVE_DIR,
+  SESSIONS_DIR,
+  liveFileFor,
+  sessionFileFor,
+  subagentDir,
+  metaPathFor,
+  transcriptPathFor,
+};

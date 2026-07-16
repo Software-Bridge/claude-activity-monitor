@@ -3,7 +3,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('monitor', {
-  onAgents: (cb) => ipcRenderer.on('agents', (_e, agents) => cb(agents)),
+  onSessions: (cb) => ipcRenderer.on('sessions', (_e, sessions) => cb(sessions)),
   onConnected: (cb) => ipcRenderer.on('connected', (_e, connected) => cb(connected)),
   ready: () => ipcRenderer.send('ready'),
   quit: () => ipcRenderer.send('quit'),

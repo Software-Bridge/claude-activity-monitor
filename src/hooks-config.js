@@ -24,7 +24,20 @@ const os = require('os');
 const path = require('path');
 const { DATA_DIR } = require('./paths');
 
-const EVENTS = ['SubagentStart', 'SubagentStop'];
+// Subagents give us the nested rows; the session events give us the section they
+// sit in and its state. Notification never fires in the VSCode extension, but
+// costs nothing to register and sharpens the "waiting" state in the terminal CLI.
+const EVENTS = [
+  'SessionStart',
+  'SessionEnd',
+  'UserPromptSubmit',
+  'PreToolUse',
+  'PostToolUse',
+  'Stop',
+  'Notification',
+  'SubagentStart',
+  'SubagentStop',
+];
 const SETTINGS = path.join(os.homedir(), '.claude', 'settings.json');
 const WINDOWS = process.platform === 'win32';
 

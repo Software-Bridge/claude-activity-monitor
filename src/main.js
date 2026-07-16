@@ -4,7 +4,7 @@ const { app, BrowserWindow, dialog, ipcMain, screen, shell } = require('electron
 const fs = require('fs');
 const path = require('path');
 const { DATA_DIR } = require('./paths');
-const { liveAgents } = require('./live-agents');
+const { liveState } = require('./live-agents');
 const { installHooks, hooksInstalled, writeShim } = require('./hooks-config');
 
 const POLL_MS = 400;
@@ -99,9 +99,9 @@ function createWindow() {
 function push(force = false) {
   if (!win || win.isDestroyed()) return;
 
-  let agents;
+  let sessions;
   try {
-    agents = liveAgents();
+    sessions = liveState();
   } catch {
     // This runs 2.5x a second against files other processes are writing. A
     // transient read error (antivirus lock, sharing violation) must not take the
@@ -109,10 +109,10 @@ function push(force = false) {
     return;
   }
 
-  const payload = JSON.stringify(agents);
+  const payload = JSON.stringify(sessions);
   if (!force && payload === lastPayload) return;
   lastPayload = payload;
-  win.webContents.send('agents', agents);
+  win.webContents.send('sessions', sessions);
 }
 
 // Two overlays would sit on top of each other and fight over the saved position.

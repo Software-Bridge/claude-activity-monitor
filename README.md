@@ -1,21 +1,29 @@
 # claude-agent-ui
 
-A small always-on-top window showing which Claude Code subagents are running right now.
+A small always-on-top window showing what your Claude Code sessions are doing right now —
+each chat window, what it is working on, and the subagents it has spawned.
 
-Claude Code has no floating agent view — `/tasks`, `claude agents`, `/workflows`, `statusLine`
+Claude Code has no floating activity view — `/tasks`, `claude agents`, `/workflows`, `statusLine`
 and `subagentStatusLine` are all terminal-bound. This is a frameless card you park in a corner
 of the screen, driven by Claude Code hooks.
 
 ```
-┌────────────────────────────────────────┐
-│ ● Claude Agent Monitor     2 agents  × │
-├────────────────────────────────────────┤
-│  │ Audit the payment module            │
-│  │ Explore  my-api               1m 4s │
-│  │ Find the flaky test                 │
-│  │ Plan     my-api                 12s │
-└────────────────────────────────────────┘
+┌──────────────────────────────────────────┐
+│ ● Claude Activity Monitor    1 active  × │
+├──────────────────────────────────────────┤
+│  my-api                        2m  WORKING│
+│  ⋯ Bash  npm test                         │
+│  │ Audit the payment module               │
+│  │ Explore                           1m 4s│
+├──────────────────────────────────────────┤
+│  docs-site                    45s  WAITING│
+│    waiting for you                        │
+└──────────────────────────────────────────┘
 ```
+
+Each section is one chat window. A session that has finished its turn is badged **waiting for
+you** and held for a minute; keep ignoring it and it drops off as idle. A session actively
+working shows the tool it is running and any subagents beneath it.
 
 Works on Windows 10/11 and macOS.
 
@@ -42,8 +50,10 @@ npm run install-hooks   # or just press Connect in the window
 npm start
 ```
 
-`install-hooks` merges `SubagentStart` and `SubagentStop` hooks into your global
-`~/.claude/settings.json`, leaving any hooks you already have untouched. To remove them again:
+`install-hooks` merges the session hooks (`SessionStart`, `SessionEnd`, `UserPromptSubmit`,
+`PreToolUse`, `PostToolUse`, `Stop`, `Notification`) and the subagent hooks (`SubagentStart`,
+`SubagentStop`) into your global `~/.claude/settings.json`, leaving any hooks you already have
+untouched. To remove them again:
 
 ```sh
 npm run uninstall-hooks
@@ -72,12 +82,30 @@ Two targets are deliberately absent, because both are quietly fatal to the way t
 ## How it works
 
 ```
-SubagentStart  ->  src/hook.js writes ~/.claude-agent-ui/live/<agent_id>.json
-SubagentStop   ->  src/hook.js deletes it
-                     └─> the window lists that directory every 400ms and re-renders
+SubagentStart/Stop        ->  src/hook.js writes/deletes ~/.claude-agent-ui/live/<agent_id>.json
+SessionStart, prompts,    ->  src/hook.js rewrites ~/.claude-agent-ui/sessions/<session_id>.json
+  tool calls, Stop, …          with the session's latest state
+                               └─> the window lists both directories every 400ms, groups the
+                                   agents under their session by session_id, and re-renders
 ```
 
-Four details are load-bearing:
+Subagents and sessions are stored differently on purpose. **A subagent file is immutable — one
+create, one unlink** — because subagents start in parallel and a shared mutable file would race.
+**A session file is mutable**, rewritten by each of its hooks in turn, because a single chat
+window drives its own hooks in sequence; there is no concurrency within a session to race on, and
+its state genuinely changes over its life (working → awaiting feedback → idle).
+
+Removing a session is left entirely to the window, never to a hook: `SessionEnd` fires
+unreliably in the VSCode extension (sometimes early, sometimes not at all), so instead every
+terminal state just starts an idle clock, and the window reaps a session once it has been silent
+past its grace — one minute while awaiting feedback, ten while nominally working (a crash).
+
+Because `Notification` never fires in the VSCode extension, "awaiting feedback" there means
+*Claude finished its turn and it is your move* (from `Stop`), not specifically *a permission
+prompt is open*. In the terminal CLI, where `Notification` does fire, the badge sharpens to
+distinguish **needs permission** from a plain wait.
+
+Four details are load-bearing for the subagent rows:
 
 **The live set is a directory, not a counter and not a log.** A counter would drift
 permanently out of sync the first time an agent was killed without firing `SubagentStop`.
