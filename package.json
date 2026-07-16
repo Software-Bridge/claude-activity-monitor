@@ -1,6 +1,6 @@
 {
   "name": "claude-agent-ui",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A small always-on-top window showing Claude Code session and subagent activity.",
   "license": "MIT",
   "author": "Software-Bridge",
