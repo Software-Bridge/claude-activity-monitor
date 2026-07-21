@@ -101,15 +101,41 @@ function load() {
   }
 }
 
+// Windows paths are case-insensitive and may be written with either separator.
+const norm = (p) => {
+  const s = p.replace(/\\/g, '/');
+  return WINDOWS ? s.toLowerCase() : s;
+};
+
 /**
- * Recognise our own entries — including ones written by older versions, which
- * invoked src/hook.js directly rather than through a shim. Missing these would
- * leave a duplicate hook behind on upgrade, or fail to remove one on uninstall.
+ * The shim we would write now, plus the one at the default location. Both are
+ * needed: someone who sets CLAUDE_AGENT_UI_DIR after installing still has an
+ * entry pointing at the old path, and failing to recognise it would duplicate
+ * the hook on every install and orphan it on uninstall.
  */
-const ours = (command) =>
-  typeof command === 'string' &&
-  command.includes('claude-agent-ui') &&
-  ['hook.cmd', 'hook.sh', 'hook.js'].some((name) => command.includes(name));
+const SHIM_NAME = WINDOWS ? 'hook.cmd' : 'hook.sh';
+const DEFAULT_SHIM = path.join(os.homedir(), '.claude-agent-ui', SHIM_NAME);
+const SHIM_KEYS = [...new Set([norm(SHIM), norm(DEFAULT_SHIM)])];
+
+// v0.1 pointed Claude Code straight at src/hook.js inside a checkout.
+const LEGACY_HOOK = /(?:^|[/"'])src\/hook\.js(?:["']|$)/;
+
+/**
+ * Recognise our own entries, including those written by older versions. Matching
+ * on the shim path rather than on the project name matters: the name only
+ * appeared in the path by default, so a relocated data directory used to make
+ * this silently stop recognising its own hooks.
+ */
+const ours = (command) => {
+  if (typeof command !== 'string') return false;
+  const c = norm(command);
+  if (SHIM_KEYS.some((key) => c.includes(key))) return true;
+
+  // Without a shim path to match on, a bare "src/hook.js" is too generic to
+  // claim on its own — and claiming someone else's hook would delete it — so
+  // the legacy case still has to look like our checkout.
+  return LEGACY_HOOK.test(c) && c.includes('claude-agent-ui');
+};
 
 const isOurs = (entry) => (entry.hooks || []).some((h) => ours(h.command));
 
