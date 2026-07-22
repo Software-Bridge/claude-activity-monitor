@@ -29,6 +29,18 @@
         --accent-soft: #f0b294;
         --wait: rgb(var(--wait-rgb));
         --alert: rgb(var(--alert-rgb));
+
+        /* The hover pane reads as a different surface, not a darker strip of the
+           same one: the hue swings from the card's blue-slate round to indigo,
+           far enough to be unmistakably its own thing while staying on the cool
+           side the card lives on. The accent orange still lands well on it,
+           which is what keeps it complementary rather than merely different. */
+        --pane-rgb: 150, 138, 224;
+        --pane-bg: rgba(44, 41, 78, 0.97);
+        --pane-border: rgba(var(--pane-rgb), 0.32);
+        --pane-text: #ded9f6;
+        --pane-key: #a49cd2;
+        --pane-title: #f1eeff;
       }
 
       * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -199,6 +211,65 @@
         flex: none;
       }
 
+      /* Every row the box can describe highlights on hover, so it is obvious
+         which one the box is currently about. */
+      .session-head, .session-activity, .agent { cursor: default; }
+
+      /* Tinted with the pane's own hue, and marked with a bar in it, so the row
+         and the box below are visibly the same subject rather than two things
+         that happened to change at once. */
+      .hovered {
+        background: rgba(var(--pane-rgb), 0.14);
+        box-shadow: inset 2px 0 0 rgba(var(--pane-rgb), 0.85);
+      }
+
+      /* The hover box sits in the flow at the bottom of the card rather than
+         floating over the rows. The window is only ever as tall as its content,
+         so a floating box would be clipped by the window edge the moment it
+         needed the room — growing the card and letting the existing resize
+         handle it has no such edge to hit, and no positioning to get wrong. */
+      #detail {
+        border-top: 1px solid var(--pane-border);
+        background: var(--pane-bg);
+        padding: 9px 12px 10px;
+        max-height: 240px;
+        overflow-y: auto;
+      }
+      #detail::-webkit-scrollbar { width: 6px; }
+      #detail::-webkit-scrollbar-thumb {
+        background: rgba(var(--pane-rgb), 0.35);
+        border-radius: 3px;
+      }
+      .detail-title {
+        font-size: 11.5px;
+        font-weight: 700;
+        line-height: 1.35;
+        margin-bottom: 6px;
+        color: var(--pane-title);
+        /* The whole point of the box: the text that was elided in the row wraps
+           here instead. `anywhere` because a long path or command has no spaces
+           to break on. */
+        overflow-wrap: anywhere;
+      }
+      .detail-row {
+        display: flex;
+        gap: 8px;
+        font-size: 10.5px;
+        line-height: 1.5;
+      }
+      .detail-row .k {
+        color: var(--pane-key);
+        flex: none;
+        width: 46px;
+      }
+      .detail-row .v {
+        color: var(--pane-text);
+        flex: 1;
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      .detail-row .v .tool { color: var(--accent-soft); font-weight: 600; }
+
       #empty {
         padding: 14px 12px;
         font-size: 11.5px;
@@ -245,6 +316,7 @@
         <button id="close" title="Quit">&times;</button>
       </header>
       <div id="list"></div>
+      <div id="detail" hidden></div>
       <div id="empty">Waiting for Claude sessions…</div>
       <div id="setup" hidden>
         <p>Not connected to Claude Code yet.</p>
@@ -262,10 +334,14 @@
       const dotEl = document.getElementById('dot');
       const cardEl = document.getElementById('card');
 
+      const detailEl = document.getElementById('detail');
+
       let sessions = [];
       let connected = true; // Assume yes until told otherwise, so the panel never flashes.
       let justConnected = false;
       let lastHeight = 0;
+      let pointer = null; // Cursor position while it is over the window, else null.
+      let hoverKey = null;
 
       function elapsed(startedAt) {
         const secs = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
@@ -287,12 +363,13 @@
       function agentRow(a) {
         const row = document.createElement('div');
         row.className = 'agent';
+        // Identity, not position: the list is rebuilt wholesale on every push,
+        // so this is what lets the hover box survive the row being recreated.
+        row.dataset.key = 'a:' + a.id;
 
         const desc = document.createElement('span');
         desc.className = 'desc';
         desc.textContent = a.description;
-        // Type is off the row now to keep it clean, but kept a hover away.
-        desc.title = a.description + '  ·  ' + a.type;
 
         const time = document.createElement('span');
         time.className = 'elapsed';
@@ -308,6 +385,7 @@
 
         const head = document.createElement('div');
         head.className = 'session-head';
+        head.dataset.key = 's:' + s.id;
 
         const permission = s.state !== 'working' && s.waiting === 'permission';
         const tone = s.state === 'working' ? 'working' : permission ? 'permission' : 'waiting';
@@ -318,7 +396,6 @@
         const project = document.createElement('span');
         project.className = 'session-project';
         project.textContent = s.project || s.title || 'Claude session';
-        project.title = s.cwd || project.textContent;
 
         const status = document.createElement('span');
         if (s.state === 'working') {
@@ -336,15 +413,15 @@
         if (s.state === 'working' && (s.activity || s.agents.length === 0)) {
           const act = document.createElement('div');
           act.className = 'session-activity';
+          // The line most likely to be cut off, so it gets its own hover target —
+          // pointing at the same session box the heading opens.
+          act.dataset.key = 'act:' + s.id;
           if (s.activity) {
             const tool = document.createElement('span');
             tool.className = 'tool';
             tool.textContent = s.activity.tool;
             act.append(document.createTextNode('running · '), tool);
-            if (s.activity.detail) {
-              act.append(document.createTextNode(' ' + s.activity.detail));
-              act.title = s.activity.tool + ' · ' + s.activity.detail;
-            }
+            if (s.activity.detail) act.append(document.createTextNode(' ' + s.activity.detail));
           } else {
             act.textContent = 'working…';
           }
@@ -353,6 +430,138 @@
 
         for (const a of s.agents) section.append(agentRow(a));
         return section;
+      }
+
+      // ------------------------------------------------------- hover box ----
+
+      /**
+       * What the cursor is over, resolved from its coordinates rather than from
+       * mouseenter/mouseleave. The list is rebuilt from scratch on every push, so
+       * the element the cursor entered is usually gone by the time the thing it
+       * described has changed — and a stationary cursor over replaced DOM gets no
+       * further enter events to correct it with.
+       *
+       * Re-deriving it from a point means the box always describes whatever now
+       * occupies that spot: the session you are reading updates in place, and an
+       * agent that finishes hands the box to its replacement rather than leaving
+       * it stuck on work that is over.
+       */
+      function keyUnderPointer() {
+        if (!pointer) return null;
+
+        const el = document.elementFromPoint(pointer.x, pointer.y);
+        if (!el) return null;
+
+        // The box grows downward and can end up under the cursor itself. Reading
+        // the point again there would find no row and close it, which would
+        // shrink the card, put a row back under the cursor, and reopen it — a
+        // flicker loop. Hovering the box means keep showing what it shows.
+        if (el.closest('#detail')) return hoverKey;
+
+        const row = el.closest('[data-key]');
+        return row ? row.dataset.key : null;
+      }
+
+      function detailRow(k, v) {
+        const row = document.createElement('div');
+        row.className = 'detail-row';
+
+        const key = document.createElement('span');
+        key.className = 'k';
+        key.textContent = k;
+
+        const value = document.createElement('span');
+        value.className = 'v';
+        if (typeof v === 'string') value.textContent = v;
+        else value.append(...v);
+
+        row.append(key, value);
+        return row;
+      }
+
+      /** Everything about a chat window that the narrow rows have to leave out. */
+      function sessionDetail(s) {
+        const rows = [];
+        if (s.cwd) rows.push(detailRow('path', s.cwd));
+        if (s.title && s.title !== s.project) rows.push(detailRow('title', s.title));
+
+        rows.push(
+          detailRow(
+            'state',
+            s.state === 'working'
+              ? 'working · ' + elapsed(s.startedAt)
+              : WAITING_LABEL[s.waiting] || 'waiting for you'
+          )
+        );
+
+        if (s.activity) {
+          const tool = document.createElement('span');
+          tool.className = 'tool';
+          tool.textContent = s.activity.tool;
+          const value = [tool];
+          if (s.activity.detail) value.push(document.createTextNode(' ' + s.activity.detail));
+          rows.push(detailRow('running', value));
+        }
+
+        // Listed one per line rather than counted: the agents are the reason the
+        // section is tall, and their descriptions are elided in the rows above.
+        s.agents.forEach((a, i) => {
+          rows.push(detailRow(i === 0 ? 'agents' : '', a.description + '  ·  ' + elapsed(a.startedAt)));
+        });
+
+        return { title: s.project || s.title || 'Claude session', rows };
+      }
+
+      function agentDetail(agent, session) {
+        const rows = [detailRow('agent', agent.type), detailRow('running', elapsed(agent.startedAt))];
+        if (session) rows.push(detailRow('in', session.project || session.cwd || 'Claude session'));
+        return { title: agent.description, rows };
+      }
+
+      /** Resolve the key back to live data, so the box redraws from each push. */
+      function detailFor(key) {
+        if (!key) return null;
+        const id = key.slice(key.indexOf(':') + 1);
+
+        if (key.startsWith('a:')) {
+          for (const s of sessions) {
+            const agent = s.agents.find((a) => a.id === id);
+            if (agent) return agentDetail(agent, s);
+          }
+          return null; // The agent finished and nothing took its place.
+        }
+
+        const session = sessions.find((s) => s.id === id);
+        return session ? sessionDetail(session) : null;
+      }
+
+      function renderDetail() {
+        hoverKey = keyUnderPointer();
+        const detail = detailFor(hoverKey);
+
+        for (const el of listEl.querySelectorAll('.hovered')) el.classList.remove('hovered');
+        detailEl.hidden = !detail;
+        if (!detail) {
+          detailEl.replaceChildren();
+          return;
+        }
+
+        const row = listEl.querySelector('[data-key="' + hoverKey + '"]');
+        if (row) row.classList.add('hovered');
+
+        const title = document.createElement('div');
+        title.className = 'detail-title';
+        title.textContent = detail.title;
+        detailEl.replaceChildren(title, ...detail.rows);
+      }
+
+      // Only when it actually changes: this runs every second, and each resize is
+      // an IPC round trip plus a real compositor operation.
+      function syncHeight() {
+        const height = cardEl.getBoundingClientRect().height;
+        if (height === lastHeight) return;
+        lastHeight = height;
+        window.monitor.resize(height);
       }
 
       function render() {
@@ -372,13 +581,10 @@
 
         listEl.replaceChildren(...sessions.map(sessionSection));
 
-        // Only when it actually changes: this runs every second, and each resize
-        // is an IPC round trip plus a real compositor operation.
-        const height = cardEl.getBoundingClientRect().height;
-        if (height !== lastHeight) {
-          lastHeight = height;
-          window.monitor.resize(height);
-        }
+        // Before measuring: the box is part of the card, so it has to be settled
+        // or the window is sized to the frame before it.
+        renderDetail();
+        syncHeight();
       }
 
       window.monitor.onSessions((next) => {
@@ -402,6 +608,17 @@
         }
         connected = ok;
         render();
+      });
+
+      // The cursor arrives from the main process rather than from mousemove: this
+      // is a background overlay, and macOS gives mouse-moved events to the
+      // frontmost app only, so nothing would arrive here until the window had
+      // been clicked. src/pointer.js has the full reasoning. A null means the
+      // cursor is somewhere else, which closes the box.
+      window.monitor.onPointer((point) => {
+        pointer = point;
+        renderDetail();
+        syncHeight();
       });
 
       document.getElementById('connect').addEventListener('click', () => window.monitor.connect());

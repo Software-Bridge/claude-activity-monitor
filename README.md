@@ -25,6 +25,12 @@ Each section is one chat window. A session that has finished its turn is badged 
 you** and held for a minute; keep ignoring it and it drops off as idle. A session actively
 working shows the tool it is running and any subagents beneath it.
 
+Rows are narrow, so anything too long to fit is cut off. Point at a row — no clicking, and the
+window never takes focus — and a pane opens along the bottom with the whole of it: the full path,
+the full command, every subagent description. It keeps up with the work while you read: a session
+you are pointing at updates in place as its tool changes, and a subagent that finishes hands the
+pane to whatever takes its slot.
+
 Works on Windows 10/11 and macOS.
 
 ## Install

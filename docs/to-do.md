@@ -1,6 +1,6 @@
 # To do
 
-Known gaps and follow-up work, as of v0.2.0. Nothing here is blocking — the app
+Known gaps and follow-up work, as of v0.8.0. Nothing here is blocking — the app
 is working and packaged for Windows — but each item is a real hole rather than a
 speculative nice-to-have.
 

@@ -1,6 +1,6 @@
 {
   "name": "claude-activity-monitor",
-  "version": "0.2.0",
+  "version": "0.8.0",
   "description": "A small always-on-top window showing Claude Code session and subagent activity.",
   "license": "MIT",
   "author": "Software-Bridge",
@@ -11,7 +11,7 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node test/hooks-config.test.js && node test/demo-activity.test.js",
+    "test": "node test/hooks-config.test.js && node test/pointer.test.js && node test/demo-activity.test.js && node test/hover.test.js",
     "demo": "node test/demo-activity.js --live",
     "install-hooks": "node scripts/install-hooks.js",
     "uninstall-hooks": "node scripts/install-hooks.js --remove",

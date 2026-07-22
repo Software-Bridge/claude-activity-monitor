@@ -5,15 +5,20 @@ const fs = require('fs');
 const path = require('path');
 const { DATA_DIR } = require('./paths');
 const { liveState } = require('./live-agents');
+const { localPoint } = require('./pointer');
 const { installHooks, hooksInstalled, writeShim } = require('./hooks-config');
 
 const POLL_MS = 400;
+// Faster than the state poll: this one is a cursor following a row, and anything
+// slower than about a tenth of a second reads as lag rather than as hover.
+const POINTER_MS = 90;
 const WIDTH = 340;
 const MARGIN = 16;
 const WINDOW_STATE = path.join(DATA_DIR, 'window.json');
 
 let win = null;
 let lastPayload = '';
+let lastPointer = '';
 
 function savedPosition() {
   try {
@@ -115,6 +120,31 @@ function push(force = false) {
   win.webContents.send('sessions', sessions);
 }
 
+/**
+ * The cursor, pushed to the renderer so it can show the hover box without the
+ * window ever taking focus. Sent only when it actually moves, and once when it
+ * leaves — an idle cursor costs nothing beyond the poll itself, and the poll is
+ * two synchronous geometry reads.
+ */
+function pushPointer() {
+  if (!win || win.isDestroyed() || !win.isVisible()) return;
+
+  let point = null;
+  try {
+    point = localPoint(win.getContentBounds(), screen.getCursorScreenPoint());
+  } catch {
+    // Both can throw while a display is being reconfigured. A dropped frame of
+    // hover is not worth a crash in a window that has to stay up.
+    return;
+  }
+
+  const key = point ? `${Math.round(point.x)},${Math.round(point.y)}` : '';
+  if (key === lastPointer) return;
+  lastPointer = key;
+
+  win.webContents.send('pointer', point);
+}
+
 // Two overlays would sit on top of each other and fight over the saved position.
 if (!app.requestSingleInstanceLock()) app.quit();
 
@@ -164,7 +194,11 @@ app.whenReady().then(() => {
   // macOS, and this also picks up the meta.json description that lands a beat
   // after SubagentStart fires.
   const timer = setInterval(() => push(), POLL_MS);
-  app.on('before-quit', () => clearInterval(timer));
+  const pointerTimer = setInterval(pushPointer, POINTER_MS);
+  app.on('before-quit', () => {
+    clearInterval(timer);
+    clearInterval(pointerTimer);
+  });
 });
 
 app.on('window-all-closed', () => app.quit());
