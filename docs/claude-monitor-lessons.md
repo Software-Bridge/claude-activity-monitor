@@ -156,6 +156,53 @@ release bar:
 - Higher priority for 1.0, in order: **hook latency**, **verified Windows behaviour**, then the
   `hook.js` robustness edges below.
 
+## What actually spawns a subagent
+
+This tool draws an agent row only for an **Agent/Task tool subagent**. Everything else Claude Code
+does — every file it reads, every command it runs, every edit it makes in its own loop — is the one
+activity line under the session heading. So the honest baseline is: *most sessions show no agent
+rows at all*, and that is the tool working, not failing.
+
+What reliably produces them, roughly in descending order of reliability:
+
+1. **Asking for it.** By name ("use the Explore agent", "have Plan design this"), by shape ("spawn
+   three agents", "investigate these in parallel", "use subagents"), or via a slash command or skill
+   whose own instructions delegate. This is the only trigger that is a *request* rather than a
+   judgement call, which is why it is the one to use when testing this window.
+2. **A search whose answer is somewhere unknown.** "Where is retry handled?", "which packages import
+   this?", "find every call site across the monorepo." Delegation pays here for an information-theory
+   reason rather than a difficulty one: the work reads an enormous amount and returns a sentence, so
+   the reading is worth doing somewhere other than the main context.
+3. **Tracks that are genuinely independent.** Several unrelated subsystems, a migration with many
+   mechanical sites, an audit along several dimensions at once. *Independence* is the trigger, not
+   size — work that is large but sequential stays in the main loop, because each step needs the
+   previous one's result.
+4. **A custom agent that matches.** Anything in `.claude/agents/` whose description fits the request.
+   Orchestration modes go further and spawn many at once by design.
+
+What stays in the chat, and should:
+
+- Anything finishable in a handful of tool calls. A subagent re-establishes context, re-explores,
+  reports back, and its report then has to be read — overhead that exceeds a job of this size.
+- Anything where the file is already known. "Fix the null check in `paths.js`" has no search space.
+- Verification of work just done. Checking belongs in the loop that did the work and has the context.
+- Iterative back-and-forth: debugging with a tight feedback loop, running tests, git operations,
+  editing a file being discussed.
+- One modest job split across several agents, which is coordination cost with no parallelism gain.
+
+The predictor is **not the technology or the stack**. It is breadth of unknown search space,
+independence of the tracks, how much context the reading would burn, and whether delegation was asked
+for outright. A monorepo, a wide migration or a codebase audit produces agents on almost any stack; a
+single service under a tight edit-test loop produces almost none on the same stack. Note especially
+that **difficulty alone does not delegate** — a hard, narrow problem is exactly what the main loop
+keeps for itself, which is the trap behind the Windows observation below: broad *and* complex prompts
+were used to try to force spawns, and broad-and-complex is not the axis that does it.
+
+Two caveats worth keeping honest. This is a description of model judgement, not of protocol: it
+varies with model, version, settings and project configuration, and none of it is a guarantee. And
+what has actually been *verified* to fire `SubagentStart` here is the Agent/Task tool; whether other
+spawn mechanisms do is untested, and should not be assumed.
+
 ## Open questions
 
 **Windows shows chat-level activity but no subagent activity.** Observed over a day of soak testing:
@@ -167,7 +214,9 @@ otherwise the session rows would not appear either. That narrows it to two candi
 
 1. **No subagents were actually spawned.** Claude Code only spawns them via the Agent/Task tool, and
    a hard or broad problem does not compel delegation — it will often just do the work in the main
-   loop. This is the leading hypothesis precisely because it is so easy to mistake for a bug.
+   loop. This is the leading hypothesis precisely because it is so easy to mistake for a bug. See
+   *What actually spawns a subagent* above: broad-and-complex is not the axis that forces one, so the
+   prompts used during that soak test were the wrong instrument for the question.
 2. **`SubagentStart` does not fire on that platform or version.**
 
 To distinguish them, in order of cost: force a subagent explicitly (ask for an Explore/Plan agent by
@@ -186,13 +235,28 @@ registering a `SubagentStart` hook that appends stdin to a file.
 - `os.homedir()` / `os.tmpdir()` run at module load, outside every `try`.
 - There is no global `uncaughtException` handler as a last net.
 
-## Planned
+## Smoke tests, and the half they cannot cover
 
-**Automated smoke tests**, serving double duty as cross-platform validation and as a demo of the
-tool. This is end-to-end validation across platforms, distinct from the unit-level gaps tracked
-under *Test coverage* in [to-do.md](to-do.md). The Windows finding above is the motivating case: a
-smoke test that *explicitly forces* subagent spawns would have answered in seconds what a day of
-organic soak testing left ambiguous.
-Worth covering: a session appearing on `SessionStart`, the tool line updating on `PreToolUse`, a
-forced subagent appearing and then clearing on `SubagentStop`, the flip to awaiting-feedback on
-`Stop`, and the idle reap after the grace period.
+Built (`npm run demo`, `npm test`): three chat terminals, three subagents each, changing what they
+are doing at random over thirty seconds. It drives the real `hook.js` with real payloads and fakes
+only what Claude Code owns — the session transcript, and the `subagents/` directory holding the
+`meta.json` a description is read from and the `.jsonl` whose mtime is the liveness signal. It is a
+demo and a test at once, which is what makes it worth keeping current: a test nobody watches rots,
+and this one gets run to show the thing off.
+
+**But it fires `SubagentStart` itself, so it cannot answer whether Claude Code does.** It validates
+everything downstream of stdin — payload parsing, the atomic write, the session read-modify-write,
+the create/unlink, the grouping and the reaping — and nothing upstream of it. The Windows open
+question above lives entirely upstream, so this does not close it; only a forced spawn against real
+Claude Code does, and *forced* is the operative word, per the section before this one.
+
+Two things it taught immediately, both about testing rather than about the app. Assertions that are
+not counts pass vacuously: the driver spent its first run writing to one data directory and reading
+from another, and every `some`/`every` check passed against the empty set while only the two length
+checks noticed. And a demo gets interrupted — piping it into `head` closes stdout, which Node
+surfaces as an EPIPE that killed the run mid-flight and left phantom agents in the real data
+directory, so teardown now also runs on signals and on stdout closing.
+
+Still uncovered end to end: the flip to awaiting-feedback on a real `Stop`, and the idle reap after
+the grace period. Both are reachable from the driver — it already fires `Stop` — and want the clock
+injected rather than waited out.
