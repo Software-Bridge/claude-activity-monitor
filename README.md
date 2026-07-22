@@ -1,4 +1,4 @@
-# claude-agent-ui
+# claude-activity-monitor
 
 A small always-on-top window showing what your Claude Code sessions are doing right now —
 each chat window, what it is working on, and the subagents it has spawned.
@@ -29,7 +29,7 @@ Works on Windows 10/11 and macOS.
 
 ## Install
 
-Grab the installer from [Releases](https://github.com/Software-Bridge/claude-agent-ui/releases),
+Grab the installer from [Releases](https://github.com/Software-Bridge/claude-activity-monitor/releases),
 run the app, and press **Connect** — that registers the hooks. Then restart Claude Code (or run
 `/hooks`) so it picks them up. No Node.js required: the app carries its own.
 
@@ -42,7 +42,9 @@ The builds are not code-signed yet, so the OS will warn you the first time:
 
 ## Running from source
 
-Requires [Node.js](https://nodejs.org) 18+.
+Requires [Node.js](https://nodejs.org) 22.12+ — Electron 43's installer depends on an ESM-only
+package, and under older Node its postinstall fails quietly, leaving `node_modules/electron` without
+its platform binary while `npm install` still reports success.
 
 ```sh
 npm install
@@ -179,6 +181,12 @@ Remove-Item Env:ELECTRON_RUN_AS_NODE; npm start
 # bash
 env -u ELECTRON_RUN_AS_NODE npm start
 ```
+
+## Notes
+
+Design decisions, the hook-availability matrix (which hooks fire in the VSCode extension versus the
+terminal CLI, and which silently never do), prerequisites, naming pitfalls and open questions live
+in [docs/claude-monitor-lessons.md](docs/claude-monitor-lessons.md).
 
 ## License
 

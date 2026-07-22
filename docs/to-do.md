@@ -32,10 +32,10 @@ better target after the above: it is pure, it already takes an injectable
 
 ## Packaging and release
 
-- **macOS build.** Config is in place (DMG, arm64 + x64, `LSUIElement` so it has
-  no Dock icon) but has never been run. DMG creation needs `hdiutil` and a real
-  keychain, so it genuinely cannot be cross-built from Windows — it needs
-  `npm run dist` on a Mac.
+- **macOS build.** Now exercised: `npm run dist` on a Mac produces both DMGs
+  (arm64 + x64) at v0.2.0, and the packaged app launches and runs with no Dock
+  icon as configured. It still genuinely cannot be cross-built from Windows —
+  DMG creation needs `hdiutil` and a real keychain — so each release needs a Mac.
 - **Code signing.** Both platforms ship unsigned, so Windows SmartScreen and
   macOS Gatekeeper warn on first run. macOS is the worse experience: Gatekeeper
   reports a downloaded unsigned app as "damaged", which is a bad look for a tool
