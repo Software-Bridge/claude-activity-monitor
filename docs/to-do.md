@@ -8,8 +8,8 @@ Ordered roughly by value.
 
 ## Test coverage
 
-`npm test` covers hook registration only, and within that only the paths the
-ownership fix touched. The gaps that matter:
+`npm test` now covers hook registration and one end-to-end demo run per scenario
+(`test/demo-activity.test.js`). The registration gaps that matter:
 
 - **Claiming someone else's hook.** `ours()` refuses to claim a bare
   `src/hook.js` unless the command also mentions the project, because a false
@@ -26,9 +26,14 @@ ownership fix touched. The gaps that matter:
 - **`load()` error paths.** A malformed or non-object `settings.json` should
   refuse to run rather than clobber; untested.
 
-Nothing outside `hooks-config.js` has tests at all. `live-agents.js` is the
-better target after the above: it is pure, it already takes an injectable
-`now`, and its reaping rules have the subtlest behaviour in the codebase.
+`live-agents.js` is now exercised, but only through the demo driver — one
+happy-path shape (three sessions, nine agents, all of them young). Its reaping
+rules are still untested, and they hold the subtlest behaviour in the codebase:
+an agent hidden for silence but not deleted, a session reaped on the short
+waiting grace versus the long working one, and the unknown-liveness case where
+silence must not count against an agent at all. All of it is reachable directly
+— the module is pure and already takes an injectable `now` — so those want unit
+tests rather than more demo scenarios.
 
 ## Packaging and release
 

@@ -61,6 +61,34 @@ untouched. To remove them again:
 npm run uninstall-hooks
 ```
 
+## Demo, and the smoke test
+
+`npm run demo` fills the window for thirty seconds with three make-believe chat terminals, three
+subagents each, all of them switching tasks at random — enough to see the layout, the badges and
+the reaping behave without waiting for real work to happen. It drives the real `src/hook.js` with
+real hook payloads, so what you see is what a live session produces.
+
+```sh
+npm run demo                                    # 30s, into the running window
+node test/demo-activity.js --scenario=heist     # a different set of make-believe work
+node test/demo-activity.js --seed=7 --speed=4   # reproducible, and four times faster
+```
+
+Scenarios are pure data in [test/scenarios/](test/scenarios/) — three terminals, each with a pool
+of prompts, tool calls and subagent descriptions. Adding one is adding a file. Without `--live` the
+run goes to a throwaway data directory instead of the one the window reads, which is how the test
+uses it:
+
+```sh
+npm test
+```
+
+That runs every scenario at speed and asserts on the picture `live-agents.js` ends up with — three
+sessions, nine subagents grouped under the right ones, descriptions resolved from disk, no stale
+activity on a terminal that has handed back, and nothing left live after teardown. It is the only
+test that covers the whole chain, and the only one that runs twelve actors at each other
+concurrently.
+
 ## Building
 
 ```sh
