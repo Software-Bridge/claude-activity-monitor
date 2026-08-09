@@ -334,7 +334,11 @@ app.whenReady().then(() => {
     }
     // encodeURI leaves '#' and '?' alone, and either would truncate the URL.
     const encoded = encodeURI(cwd).replace(/#/g, '%23').replace(/\?/g, '%3F');
-    Promise.resolve(shell.openExternal('vscode://file' + encoded)).catch(() => {
+    // vscode://file wants exactly one slash before the path. A POSIX cwd already
+    // begins with one (/Users/…); a Windows cwd begins with the drive (C:/…) and
+    // would otherwise fuse into vscode://fileC:/… — a URL VS Code silently drops.
+    const url = 'vscode://file/' + encoded.replace(/^\/+/, '');
+    Promise.resolve(shell.openExternal(url)).catch(() => {
       /* no handler registered for vscode:// — nothing useful to say about it */
     });
   });
