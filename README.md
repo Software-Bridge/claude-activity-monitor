@@ -139,6 +139,11 @@ create, one unlink** — because subagents start in parallel and a shared mutabl
 window drives its own hooks in sequence; there is no concurrency within a session to race on, and
 its state genuinely changes over its life (working → awaiting feedback → idle).
 
+Clicking a session brings its editor window to the front, via a `vscode://file/<cwd>` URL. This
+lands on the right *window*, not the right chat — the extension exposes no way in for that — and
+two chats on one folder resolve alike. On Windows the first click prompts for permission to open
+the protocol; approve it with *always allow* and later clicks are silent.
+
 Removing a session is left entirely to the window, never to a hook: `SessionEnd` fires
 unreliably in the VSCode extension (sometimes early, sometimes not at all), so instead every
 terminal state just starts an idle clock, and the window reaps a session once it has been silent
@@ -228,6 +233,15 @@ Remove-Item Env:ELECTRON_RUN_AS_NODE; npm start
 # bash
 env -u ELECTRON_RUN_AS_NODE npm start
 ```
+
+**Clicking a session does nothing the first time (Windows).** The first click hands a
+`vscode://file/…` URL to the OS, and Windows asks permission to open it — the editor comes
+forward only after you approve. Tick the *always allow* box in that prompt so it sticks;
+otherwise every reveal waits on the dialog.
+
+**A code change to the app isn't taking effect.** The window holds a single-instance lock, so a
+fresh `npm start` while one is already running quietly exits and leaves the *old* build up. Fully
+quit the running instance first (its `×`, or kill every `electron` process) before relaunching.
 
 ## Notes
 
