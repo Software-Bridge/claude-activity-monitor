@@ -22,7 +22,7 @@ of the screen, driven by Claude Code hooks.
 ```
 
 Each section is one chat window. A session that has finished its turn is badged **waiting for
-you** and held for a minute; keep ignoring it and it drops off as idle. A session actively
+you** and held until you deal with it; leave it half an hour and it drops off as closed. A session actively
 working shows the tool it is running and any subagents beneath it.
 
 Rows are narrow, so anything too long to fit is cut off. Point at a row — no clicking, and the
@@ -39,7 +39,15 @@ Grab the installer from [Releases](https://github.com/Software-Bridge/claude-act
 run the app, and press **Connect** — that registers the hooks. Then restart Claude Code (or run
 `/hooks`) so it picks them up. No Node.js required: the app carries its own.
 
-Drag the window by its header; it remembers where you put it. Click `×` to quit.
+Drag the window by its header, and resize it from the grip in either bottom corner — useful if the
+default card is small to read at your viewing distance. Both corners are there because whichever edge
+of the screen you park the card against, one of them is facing away from it. Each holds the opposite
+edge still: drag the right grip and the left edge stays put, drag the left grip and the right edge
+does. It remembers both where you put it and how big you made it.
+
+Until you resize it, the window's height follows its contents, growing and shrinking as sessions come
+and go. Dragging the grip hands the height to you for good: the card then stays the size you left it
+and the list scrolls inside. Click `×` to quit.
 
 The builds are not code-signed yet, so the OS will warn you the first time:
 
@@ -134,7 +142,12 @@ its state genuinely changes over its life (working → awaiting feedback → idl
 Removing a session is left entirely to the window, never to a hook: `SessionEnd` fires
 unreliably in the VSCode extension (sometimes early, sometimes not at all), so instead every
 terminal state just starts an idle clock, and the window reaps a session once it has been silent
-past its grace — one minute while awaiting feedback, ten while nominally working (a crash).
+past its grace — thirty minutes while awaiting feedback, ten while nominally working (a crash).
+
+The awaiting-feedback grace is long on purpose. A session waiting on you does not get less worth
+showing as it waits, and the point at which a floating monitor earns its place is exactly the point
+you have looked away for a few minutes. It is finite only because a chat you simply *closed* was
+last seen finishing its turn, and nothing from outside can tell that apart from one still waiting.
 
 Because `Notification` never fires in the VSCode extension, "awaiting feedback" there means
 *Claude finished its turn and it is your move* (from `Stop`), not specifically *a permission

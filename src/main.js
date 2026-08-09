@@ -13,64 +13,137 @@ const POLL_MS = 400;
 // slower than about a tenth of a second reads as lag rather than as hover.
 const POINTER_MS = 90;
 const WIDTH = 340;
+const HEIGHT = 120;
+// Small enough to park in a corner, large enough that the header still reads.
+const MIN_WIDTH = 240;
+const MIN_HEIGHT = 80;
+// Far past any real display, so a bad number cannot produce a window that has to
+// be resized back from off-screen.
+const MAX_SIDE = 4000;
+// The grips sit a couple of pixels inside the card, so the corner being dragged
+// is this much beyond the cursor. Without it the window creeps inward by that
+// margin on every drag.
+const GRIP_INSET = 3;
 const MARGIN = 16;
+
+const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, Math.round(n)));
 const WINDOW_STATE = path.join(DATA_DIR, 'window.json');
 
 let win = null;
 let lastPayload = '';
 let lastPointer = '';
 
-function savedPosition() {
+// The window auto-fits its height to its content until the moment the user drags
+// an edge; from then on the height is theirs and the list scrolls inside it.
+// Without this the auto-fit would simply undo every manual resize on the next
+// render, a second later.
+let userSized = false;
+// The last height this process asked for, which is how a resize event caused by
+// the auto-fit is told apart from one caused by a person. Seeded with the height
+// the window opens at, so the very first event is not mistaken for a drag.
+let appliedHeight = null;
+
+/**
+ * The geometry the window was last left at. Position and size are validated
+ * separately on purpose: a position can be stranded by a display that is no
+ * longer attached, but a size the user chose is still the size they want on
+ * whatever screen the window lands on.
+ */
+function savedBounds() {
+  let raw;
   try {
-    const { x, y } = JSON.parse(fs.readFileSync(WINDOW_STATE, 'utf8'));
-    // Ignore a position left behind by a monitor that is no longer attached.
+    raw = JSON.parse(fs.readFileSync(WINDOW_STATE, 'utf8'));
+  } catch {
+    return {};
+  }
+  if (!raw || typeof raw !== 'object') return {};
+
+  const out = {};
+  const width = Number.isFinite(raw.width) ? Math.max(MIN_WIDTH, Math.round(raw.width)) : WIDTH;
+  out.width = width;
+
+  // Ignore a position left behind by a monitor that is no longer attached.
+  if (Number.isFinite(raw.x) && Number.isFinite(raw.y)) {
     const onScreen = screen.getAllDisplays().some((d) => {
       const b = d.workArea;
-      return x >= b.x - WIDTH && x <= b.x + b.width && y >= b.y && y <= b.y + b.height;
+      return raw.x >= b.x - width && raw.x <= b.x + b.width && raw.y >= b.y && raw.y <= b.y + b.height;
     });
-    if (onScreen && Number.isFinite(x) && Number.isFinite(y)) return { x, y };
-  } catch {
-    /* fall through to the default corner */
+    if (onScreen) Object.assign(out, { x: raw.x, y: raw.y });
   }
-  return null;
+
+  // A height is restored only if it was the user's. An auto-fitted height belongs
+  // to the content that produced it, and restoring it would open the window at
+  // the size of a session list that no longer exists.
+  if (raw.sized === true && Number.isFinite(raw.height)) {
+    out.height = Math.max(MIN_HEIGHT, Math.round(raw.height));
+    out.sized = true;
+  }
+  return out;
 }
 
-function defaultPosition() {
+function defaultPosition(width = WIDTH) {
   const { workArea } = screen.getPrimaryDisplay();
   return {
-    x: workArea.x + workArea.width - WIDTH - MARGIN,
+    x: workArea.x + workArea.width - width - MARGIN,
     y: workArea.y + MARGIN,
   };
 }
 
-// 'moved' fires continuously while dragging, so writing on each one would do
-// synchronous disk I/O on the UI thread throughout the drag.
+// 'moved' and 'resize' both fire continuously while dragging, so writing on each
+// one would do synchronous disk I/O on the UI thread throughout the drag.
 let persistTimer = null;
-function persistPosition() {
+function persistBounds() {
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     if (!win || win.isDestroyed()) return;
     const [x, y] = win.getPosition();
+    const [width, height] = win.getSize();
     try {
       fs.mkdirSync(DATA_DIR, { recursive: true });
-      fs.writeFileSync(WINDOW_STATE, JSON.stringify({ x, y }));
+      fs.writeFileSync(WINDOW_STATE, JSON.stringify({ x, y, width, height, sized: userSized }));
     } catch {
-      /* position is a nicety, not worth surfacing */
+      /* geometry is a nicety, not worth surfacing */
     }
   }, 300);
 }
 
+/** Which height regime the renderer should lay itself out for. */
+function sendSizing() {
+  if (win && !win.isDestroyed()) win.webContents.send('sizing', userSized);
+}
+
+/**
+ * A resize, from either source. Ours always lands on exactly the height we just
+ * asked for; anything else is a person dragging an edge, and the first time that
+ * happens the auto-fit stands down for good. Width needs no such test — nothing
+ * in this process ever sets it.
+ */
+function onResized() {
+  if (!win || win.isDestroyed()) return;
+  const [, height] = win.getSize();
+  if (!userSized && Math.abs(height - appliedHeight) > 1) {
+    userSized = true;
+    sendSizing();
+  }
+  persistBounds();
+}
+
 function createWindow() {
-  const pos = savedPosition() || defaultPosition();
+  const saved = savedBounds();
+  const pos = Number.isFinite(saved.x) ? { x: saved.x, y: saved.y } : defaultPosition(saved.width);
+  userSized = saved.sized === true;
+  appliedHeight = saved.height || HEIGHT;
 
   win = new BrowserWindow({
-    width: WIDTH,
-    height: 120,
+    width: saved.width || WIDTH,
+    height: appliedHeight,
+    minWidth: MIN_WIDTH,
+    minHeight: MIN_HEIGHT,
     x: pos.x,
     y: pos.y,
     frame: false,
     transparent: true,
-    resizable: false,
+    resizable: true,
     movable: true,
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -92,7 +165,8 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'index.html'));
 
   win.once('ready-to-show', () => win.show());
-  win.on('moved', persistPosition);
+  win.on('moved', persistBounds);
+  win.on('resize', onResized);
 
   // Keep links from opening inside the overlay.
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -169,6 +243,9 @@ app.whenReady().then(() => {
   ipcMain.on('ready', () => {
     push(true);
     sendStatus();
+    // A restored manual height has to reach the renderer before its first
+    // measurement, or it auto-fits once and undoes the size it just opened at.
+    sendSizing();
   });
   ipcMain.on('quit', () => app.quit());
 
@@ -184,8 +261,82 @@ app.whenReady().then(() => {
   });
   ipcMain.on('resize', (_e, height) => {
     if (!win || win.isDestroyed()) return;
+    // Once the height is the user's, the renderer stops asking — but it is the
+    // main process that owns the window, so the refusal is enforced here too.
+    if (userSized) return;
     if (!Number.isFinite(height)) return;
-    win.setBounds({ height: Math.min(2000, Math.max(1, Math.round(height))) }, false);
+    appliedHeight = Math.min(2000, Math.max(1, Math.round(height)));
+    win.setBounds({ height: appliedHeight }, false);
+  });
+
+  // A grip drag. Unlike the auto-fit this is the user speaking, so it both sets
+  // the size and puts the window into manual height for good.
+  //
+  // The corner decides which edges move. Dragging south-east leaves the window's
+  // origin alone and the cursor's offset simply *is* the new size. South-west
+  // instead anchors the right edge and walks the left one in, so the width and
+  // the x both change and have to be derived from the current bounds — which is
+  // why this arithmetic is here rather than in the renderer.
+  //
+  // Both are computed from an absolute cursor position rather than a delta, so a
+  // drag cannot accumulate rounding error. South-west settles rather than
+  // oscillates for the same reason: once the window has moved under the cursor,
+  // the next event reports GRIP_INSET again and resolves to the same width.
+  ipcMain.on('resize-to', (_e, req) => {
+    if (!win || win.isDestroyed() || !req) return;
+    if (!Number.isFinite(req.x) || !Number.isFinite(req.y)) return;
+
+    const b = win.getBounds();
+    const height = clamp(req.y + GRIP_INSET, MIN_HEIGHT, MAX_SIDE);
+
+    let width;
+    let x = b.x;
+    if (req.corner === 'sw') {
+      const right = b.x + b.width;
+      width = clamp(b.width - req.x + GRIP_INSET, MIN_WIDTH, MAX_SIDE);
+      x = right - width;
+    } else {
+      width = clamp(req.x + GRIP_INSET, MIN_WIDTH, MAX_SIDE);
+    }
+
+    if (!userSized) {
+      userSized = true;
+      sendSizing();
+    }
+    appliedHeight = height;
+    win.setBounds({ x, y: b.y, width, height }, false);
+  });
+
+  /**
+   * Clicking a row jumps to the editor that session is running in.
+   *
+   * The path originates in the session's own hook payload, but it still arrives
+   * over IPC, so it is checked here rather than trusted — only an absolute path
+   * to a directory that presently exists is ever handed to the shell.
+   *
+   * `vscode://` rather than the `code` CLI on purpose: a GUI app inherits the
+   * launcher's environment, not a login shell's, so `code` is routinely absent
+   * from a bundled app's PATH even where it works fine in a terminal. That is
+   * the same trap the hook shim exists to sidestep.
+   *
+   * Two limits are inherent rather than shortcuts. This lands in the right
+   * *window*, not the right chat: the extension exposes `claude-vscode.focus`
+   * but declares no URI handler, and the CLI has no command flag, so there is no
+   * way in from outside. And a session is identified only as far as its cwd, so
+   * two chats on one folder resolve alike.
+   */
+  ipcMain.on('reveal', (_e, cwd) => {
+    if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) return;
+    try {
+      if (!fs.statSync(cwd).isDirectory()) return;
+    } catch {
+      return; // moved or deleted since the session started
+    }
+    // encodeURI leaves '#' and '?' alone, and either would truncate the URL.
+    const encoded = encodeURI(cwd).replace(/#/g, '%23').replace(/\?/g, '%3F');
+    Promise.resolve(shell.openExternal('vscode://file' + encoded)).catch(() => {
+      /* no handler registered for vscode:// — nothing useful to say about it */
+    });
   });
 
   createWindow();

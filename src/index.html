@@ -41,6 +41,12 @@
         --pane-text: #ded9f6;
         --pane-key: #a49cd2;
         --pane-title: #f1eeff;
+
+        /* Where everything hanging under a session heading starts: level with the
+           session name, not with the state dot to its left. Derived rather than
+           guessed — the heading's own left padding, then the dot and the flex gap
+           that precede the name — so the two stay aligned if the dot is resized. */
+        --hang: calc(12px + 8px + 8px);
       }
 
       * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -122,6 +128,55 @@
       }
       #close:hover { color: var(--text); background: var(--hover); }
 
+      /* Once the height belongs to the user the card stops being as tall as its
+         contents and becomes as tall as the window, with the list absorbing
+         whatever is left after the header and the hover pane have taken theirs.
+         min-height:0 is what actually lets it shrink: a flex item defaults to
+         min-content, so without it a long list would push the card past the
+         window instead of scrolling inside it. */
+      body.sized, body.sized #card { height: 100vh; }
+      body.sized #card { display: flex; flex-direction: column; }
+      body.sized #list { max-height: none; flex: 1 1 auto; min-height: 0; }
+
+      /* Electron lists transparent windows as not reliably resizable, and this
+         one is transparent for its rounded corners — so the native edge drag is
+         kept (it works on macOS) but not depended on. This grip drives the
+         resize itself, which also gives the card the one thing it otherwise
+         lacks: any visible sign that it can be resized at all. */
+      /* Both bottom corners, because which one is reachable depends on which edge
+         of the screen the card is parked against: pinned right, the outward
+         corner is the left one, and hunting for a grip on the far side reads as
+         not having one. Neither corner is privileged. */
+      .grip {
+        position: fixed;
+        bottom: 2px;
+        width: 14px;
+        height: 14px;
+        -webkit-app-region: no-drag;
+        opacity: 0.4;
+      }
+      .grip:hover { opacity: 0.85; }
+
+      .grip.se {
+        right: 2px;
+        cursor: nwse-resize;
+        background: repeating-linear-gradient(
+          -45deg,
+          transparent 0 2px,
+          rgba(var(--line-rgb), 0.8) 2px 3px
+        );
+      }
+
+      .grip.sw {
+        left: 2px;
+        cursor: nesw-resize;
+        background: repeating-linear-gradient(
+          45deg,
+          transparent 0 2px,
+          rgba(var(--line-rgb), 0.8) 2px 3px
+        );
+      }
+
       #list { max-height: 460px; overflow-y: auto; }
       #list::-webkit-scrollbar { width: 6px; }
       #list::-webkit-scrollbar-thumb {
@@ -179,7 +234,7 @@
       /* The live tool line and the subagents share one indent, so they read as a
          single list hanging off the window heading above them. */
       .session-activity {
-        padding: 1px 12px 2px 24px;
+        padding: 1px 12px 2px var(--hang);
         font-size: 10.5px;
         color: var(--faint);
         white-space: nowrap;
@@ -192,7 +247,7 @@
         display: flex;
         align-items: baseline;
         gap: 8px;
-        padding: 3px 12px 3px 24px;
+        padding: 3px 12px 3px var(--hang);
       }
       .agent .desc {
         font-size: 11.5px;
@@ -213,7 +268,9 @@
 
       /* Every row the box can describe highlights on hover, so it is obvious
          which one the box is currently about. */
-      .session-head, .session-activity, .agent { cursor: default; }
+      /* A pointer because they are clickable — the only cue the card gives that
+         a row leads anywhere, since it has no room for a visible affordance. */
+      .session-head, .session-activity, .agent { cursor: pointer; }
 
       /* Tinted with the pane's own hue, and marked with a bar in it, so the row
          and the box below are visibly the same subject rather than two things
@@ -324,6 +381,8 @@
         <div id="hint">Adds session &amp; subagent hooks to your Claude Code settings.</div>
       </div>
     </div>
+    <div class="grip sw" data-corner="sw"></div>
+    <div class="grip se" data-corner="se"></div>
 
     <script>
       const listEl = document.getElementById('list');
@@ -338,6 +397,8 @@
 
       let sessions = [];
       let connected = true; // Assume yes until told otherwise, so the panel never flashes.
+      // Whether the window's height is the user's rather than the content's.
+      let sized = false;
       let justConnected = false;
       let lastHeight = 0;
       let pointer = null; // Cursor position while it is over the window, else null.
@@ -359,6 +420,54 @@
         ended: 'ended',
         new: 'ready',
       };
+
+      // A working session with no tool line yet still needs a word, for the same
+      // reason Claude Code's spinner has one: a blank row reads as broken. The word
+      // is decoration and says nothing about the work — the state it sits under is
+      // carried by the badge, which is real. See the lessons doc.
+      // Capitalised to match the spinner these echo. It is the one place the card
+      // departs from its own lowercase habit ('running · ', 'waiting for you'),
+      // and deliberately: the resemblance to the terminal is the whole point of
+      // the line, and a lowercase verb reads as this window's own word rather
+      // than as the one Claude Code would have shown.
+      const VERBS = [
+        'Brewing', 'Churning', 'Clauding', 'Cogitating', 'Concocting', 'Crunching',
+        'Deciphering', 'Deliberating', 'Hatching', 'Herding', 'Ideating', 'Incubating',
+        'Marinating', 'Mulling', 'Musing', 'Noodling', 'Percolating', 'Pondering',
+        'Puttering', 'Puzzling', 'Ruminating', 'Scheming', 'Simmering', 'Spelunking',
+        'Stewing', 'Sussing',
+      ];
+
+      // Claude Code ramps its spinner 2s, 3s, 5s and every 5s after, and matching
+      // that is the whole point: a word frozen in a card where the elapsed counters
+      // tick beside it reads as a hung row, not a calm one.
+      //
+      // The cadence has to be kept *outside* the render, though. render() rebuilds
+      // the list wholesale every second and on every push, so rolling as a session
+      // is drawn would roll at the render rate rather than the spinner's. Each
+      // session therefore owns its word and the time it is next due, and drawing
+      // only reads the clock.
+      const ROLL_MS = [2000, 3000, 5000];
+      const verbs = new Map();
+
+      const pick = (list) => list[Math.floor(Math.random() * list.length)];
+
+      function verbFor(id) {
+        const now = Date.now();
+        let v = verbs.get(id);
+        if (!v) {
+          v = { word: pick(VERBS), step: 0, due: now + ROLL_MS[0] };
+          verbs.set(id, v);
+        } else if (now >= v.due) {
+          // Never the same word twice running: a roll that lands where it started
+          // is indistinguishable from one that never happened.
+          let next = v.word;
+          while (next === v.word && VERBS.length > 1) next = pick(VERBS);
+          v.word = next;
+          v.due = now + (ROLL_MS[++v.step] ?? ROLL_MS[ROLL_MS.length - 1]);
+        }
+        return v.word;
+      }
 
       function agentRow(a) {
         const row = document.createElement('div');
@@ -382,6 +491,10 @@
       function sessionSection(s) {
         const section = document.createElement('div');
         section.className = 'session';
+        // What a click on any row in this section opens. Held on the section
+        // rather than the row so the whole block is one target — the rows are
+        // narrow enough that hunting for a small affordance would be worse.
+        if (s.cwd) section.dataset.cwd = s.cwd;
 
         const head = document.createElement('div');
         head.className = 'session-head';
@@ -423,7 +536,7 @@
             act.append(document.createTextNode('running · '), tool);
             if (s.activity.detail) act.append(document.createTextNode(' ' + s.activity.detail));
           } else {
-            act.textContent = 'working…';
+            act.textContent = verbFor(s.id) + '…';
           }
           section.append(act);
         }
@@ -558,6 +671,10 @@
       // Only when it actually changes: this runs every second, and each resize is
       // an IPC round trip plus a real compositor operation.
       function syncHeight() {
+        // In manual mode the height is the user's: the card fills the window and
+        // the list scrolls, so there is nothing to ask for. Asking anyway would
+        // shrink the window back to its contents a second after every drag.
+        if (sized) return;
         const height = cardEl.getBoundingClientRect().height;
         if (height === lastHeight) return;
         lastHeight = height;
@@ -579,6 +696,13 @@
         setupEl.hidden = connected && !justConnected;
         emptyEl.style.display = connected && !justConnected && n === 0 ? 'block' : 'none';
 
+        // Reaped sessions must not leave their verb clocks behind, or a long-lived
+        // window accumulates one per session it has ever shown.
+        if (verbs.size > sessions.length) {
+          const live = new Set(sessions.map((s) => s.id));
+          for (const id of verbs.keys()) if (!live.has(id)) verbs.delete(id);
+        }
+
         listEl.replaceChildren(...sessions.map(sessionSection));
 
         // Before measuring: the box is part of the card, so it has to be settled
@@ -589,6 +713,14 @@
 
       window.monitor.onSessions((next) => {
         sessions = Array.isArray(next) ? next : [];
+        render();
+      });
+
+      window.monitor.onSizing((on) => {
+        sized = on === true;
+        document.body.classList.toggle('sized', sized);
+        // The list's own height changes with the mode, so the pane has to be
+        // remeasured against it rather than left where the old layout put it.
         render();
       });
 
@@ -620,6 +752,59 @@
         renderDetail();
         syncHeight();
       });
+
+      // Clicking anywhere in a section opens the editor that session runs in.
+      // Delegated rather than bound per row: the list is rebuilt wholesale on
+      // every push, so per-row listeners would be attached and thrown away two
+      // and a half times a second for the life of the window.
+      //
+      // This is the one place the card takes a deliberate action rather than
+      // just reporting. Hover stays passive and focus-free as before — a click
+      // is an explicit ask, which is what makes stealing focus acceptable here.
+      listEl.addEventListener('click', (e) => {
+        const section = e.target && e.target.closest && e.target.closest('.session');
+        if (!section || !section.dataset.cwd) return;
+        window.monitor.reveal(section.dataset.cwd);
+      });
+
+      // Dragging either bottom corner is the resize. The window's own pointer feed
+      // is no use here — it is polled at 90ms and rounded to whole pixels, which
+      // is fine for following a row and visibly coarse for dragging a corner. A
+      // pointer capture gives the real events instead: macOS withholds
+      // mouse-moved from a window that is not frontmost, but a button held down
+      // routes to whoever took the pointerdown, which is the one case this needs.
+      //
+      // Only the cursor's position within the window is sent. Which edges that
+      // position moves depends on the corner, and the window's own geometry is
+      // needed to work it out, so the arithmetic lives in main.js where the
+      // bounds are. Sending a position rather than a delta is what keeps a long
+      // drag from accumulating drift.
+      let gripping = null;
+
+      for (const grip of document.querySelectorAll('.grip')) {
+        grip.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          gripping = grip.dataset.corner;
+          grip.setPointerCapture(e.pointerId);
+        });
+
+        grip.addEventListener('pointermove', (e) => {
+          if (!gripping) return;
+          window.monitor.resizeTo(gripping, e.clientX, e.clientY);
+        });
+
+        const end = (e) => {
+          if (!gripping) return;
+          gripping = null;
+          try {
+            grip.releasePointerCapture(e.pointerId);
+          } catch {
+            /* already released, e.g. the pointer was cancelled */
+          }
+        };
+        grip.addEventListener('pointerup', end);
+        grip.addEventListener('pointercancel', end);
+      }
 
       document.getElementById('connect').addEventListener('click', () => window.monitor.connect());
       document.getElementById('close').addEventListener('click', () => window.monitor.quit());

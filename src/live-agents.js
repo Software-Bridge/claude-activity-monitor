@@ -32,11 +32,25 @@ const SILENT_FOR_MS = 10 * 60 * 1000;
 
 /**
  * A session that has finished its turn is "awaiting feedback": shown, badged, and
- * kept for a short grace period so a reply that lands quickly slots it straight
- * back to working. Sit silent past the grace and it is "completely idle" — pulled
+ * kept until it is stale enough to presume closed — at which point it is pulled
  * from the window until something happens in it again.
+ *
+ * This was a minute, on the reasoning that silence past a short grace meant the
+ * session was idle. That reads the wrong way round. A session waiting on *you*
+ * does not become less worth showing as time passes, it becomes more so, and the
+ * moment an always-on-top monitor earns its place is exactly the moment you have
+ * looked away for a few minutes. A minute's grace removed the signal precisely
+ * when it started to matter.
+ *
+ * It cannot simply be infinite, though. `SessionEnd` is unreliable in the VSCode
+ * extension, so a chat that was merely closed was last seen finishing its turn,
+ * and would sit here forever. Nor can the two be told apart from outside:
+ * transcript mtime stops advancing for a closed session and for one patiently
+ * awaiting a reply alike. So this is a judgement call rather than a deduction —
+ * long enough to step away and still come back to the truth, short enough that
+ * closed windows clear themselves within a break rather than piling up all day.
  */
-const WAITING_GRACE_MS = 60 * 1000;
+const WAITING_GRACE_MS = 30 * 60 * 1000;
 
 /**
  * A session still marked "working" but silent this long has died without a Stop —

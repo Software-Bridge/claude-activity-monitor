@@ -61,9 +61,20 @@ atomic rename so a reader never sees a torn write.
 trustworthy one on the list. So every terminal state merely starts an idle clock, and the *window*
 does all reaping. This makes removal robust to a hook that fires early, late, or never.
 
-**Reaping runs on per-state clocks.** A session awaiting feedback gets a short grace (one minute);
+**Reaping runs on per-state clocks.** A session awaiting feedback is kept half an hour;
 a session still marked working gets the long silence window (ten minutes) before it is presumed
 crashed. A session with live subagents is never reaped — its children are proof of life.
+
+That half hour was a minute until it was tested in anger, and the correction is worth keeping
+because the original reasoning inverted the tool's purpose. Silence past a short grace was read as
+"idle, stop showing it". But a session waiting on *you* does not get less worth showing as it waits,
+and the moment an always-on-top monitor earns its place is the moment you looked away — so the
+short clock deleted the signal exactly when it began to matter. In use the symptom was subtle
+enough to look like a hook bug: only the most recently finished session was ever badged, because
+every earlier one had already been reaped. The grace stays finite only because `SessionEnd` is
+unreliable, so a chat that was merely closed also sits in "finished its turn" — and no signal
+available from outside separates the two, transcript mtime included. The number is therefore a
+judgement, not a deduction, and should be read as one.
 
 **Liveness comes from transcript mtime, not a timeout.** A killed agent never fires its stop hook,
 and start time cannot distinguish a long-running agent from a dead one. The subagent's own
@@ -202,6 +213,72 @@ Two caveats worth keeping honest. This is a description of model judgement, not 
 varies with model, version, settings and project configuration, and none of it is a guarantee. And
 what has actually been *verified* to fire `SubagentStart` here is the Agent/Task tool; whether other
 spawn mechanisms do is untested, and should not be assumed.
+
+## The terminal's spinner verbs, and why they stay out
+
+A natural feature request: Claude Code's own spinner says `Clauding…`, `Percolating…`,
+`Flibbertigibbeting…` — replace this window's `WORKING` badge with that, so the two agree. It is
+worth writing down why the answer is no, because the reasoning is about what a monitor is for and
+generalises past this one case.
+
+**The verbs carry no information.** Verified by reading the shipped bundle of the VSCode extension
+at v2.1.220 (`webview/index.js`), where the picker is:
+
+```js
+function Hj(e) { return e[Math.floor(Math.random() * e.length)] }
+```
+
+against a hardcoded list, re-rolled on a timer at 2s, 3s, 5s and every 5s thereafter. It is not
+sampled from what Claude is doing, and not even sampled *when* Claude does something new — the word
+changing means five seconds passed. That the `spinnerVerbs` setting lets a user `append` to or
+`replace` the list outright is confirmation from the other direction: nothing downstream could be
+reading meaning out of it.
+
+There is exactly one exception, and it is the only verb in the system that means anything:
+
+```js
+let u = l; if (i === "compacting") u = "Compacting";
+```
+
+**It is also unreachable.** The value is React state in the chat webview's renderer, born and dying
+in the UI layer. It never enters a hook payload, the transcript, or statusLine input — so there is
+no plumbing to tap, independently of whether tapping it would be a good idea.
+
+**Putting it where the badge goes would still make this window worse.** The `WORKING` badge is a real
+tri-state derived from actual hooks; a random gerund in its place swaps observed state for noise — a
+row reading `Percolating` while a session sits wedged on the same tool claims progress where there is
+none. So the badge is left alone, and the verb is confined to the placeholder: the line drawn when a
+session is working with **no tool line and no subagents**, where the window genuinely knows nothing
+beyond "working" and the alternative is blank.
+
+Since the upstream word is `Math.random()` over a static list, a locally generated one is not a worse
+imitation of it. It is exactly as truthful, and needs no data from Claude Code at all — so the window
+keeps its own list and rolls it on Claude Code's cadence (2s, 3s, 5s, then every 5s).
+
+**The cadence is worth spelling out, because getting it from the render loop is wrong.** `render()`
+rebuilds the list wholesale every second and again on every push, so picking a word while drawing a
+session rolls at the *render* rate, not the spinner's. Each session instead owns its word and the
+time that word is next due; drawing only reads the clock. Those clocks are pruned against the live
+session list, or a long-running window accumulates one for every session it has ever shown. A roll is
+also forbidden from landing on the word it started from, since that is indistinguishable from a roll
+that never happened.
+
+**A rule that was tried here and turned out too strong**, recorded because it is the sort of thing
+that sounds right: *a monitor may never animate anything it did not observe*. The first version of
+this derived the verb from the session id, so it was stable for that session's life and never moved.
+In use it was worse. A frozen word sitting beside elapsed counters that tick reads as a **hung row** —
+so stillness was itself a false signal, and the rule had quietly assumed that not-moving is neutral.
+
+The verbs are also capitalised, as the spinner's are. That breaks the card's own lowercase habit
+(`running · `, `waiting for you`), and should: the line exists to echo the terminal, so matching the
+terminal's casing is what makes it read as a borrowed word rather than one of this window's own.
+
+The corrected version: **motion misleads only where it displaces information.** Animating the badge
+is a lie because the badge has something true to say. Animating the placeholder is not, because the
+placeholder is drawn exactly when there is nothing to displace. Applied to this codebase the test is
+not "did we observe it?" but "is there an observation this is standing in front of?"
+
+`Compacting` is the one piece here genuinely worth having, and no hook currently reports it.
 
 ## Open questions
 
