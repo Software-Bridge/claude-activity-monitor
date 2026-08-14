@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { DATA_DIR } = require('./paths');
 const { liveState } = require('./live-agents');
-const { localPoint } = require('./pointer');
+const { localPoint, dragBounds } = require('./pointer');
 const { installHooks, hooksInstalled, writeShim } = require('./hooks-config');
 
 const POLL_MS = 400;
@@ -20,10 +20,6 @@ const MIN_HEIGHT = 80;
 // Far past any real display, so a bad number cannot produce a window that has to
 // be resized back from off-screen.
 const MAX_SIDE = 4000;
-// The grips sit a couple of pixels inside the card, so the corner being dragged
-// is this much beyond the cursor. Without it the window creeps inward by that
-// margin on every drag.
-const GRIP_INSET = 3;
 const MARGIN = 16;
 
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, Math.round(n)));
@@ -42,6 +38,11 @@ let userSized = false;
 // the auto-fit is told apart from one caused by a person. Seeded with the height
 // the window opens at, so the very first event is not mistaken for a drag.
 let appliedHeight = null;
+// Where a grip drag began: the window's bounds and the cursor's screen position
+// at pointerdown. Held for the life of the drag so every move resolves against a
+// fixed reference rather than against a window that is itself moving. Null when
+// no drag is in progress, which is also what makes a stray move a no-op.
+let dragAnchor = null;
 
 /**
  * The geometry the window was last left at. Position and size are validated
@@ -269,42 +270,63 @@ app.whenReady().then(() => {
     win.setBounds({ height: appliedHeight }, false);
   });
 
-  // A grip drag. Unlike the auto-fit this is the user speaking, so it both sets
-  // the size and puts the window into manual height for good.
-  //
-  // The corner decides which edges move. Dragging south-east leaves the window's
-  // origin alone and the cursor's offset simply *is* the new size. South-west
-  // instead anchors the right edge and walks the left one in, so the width and
-  // the x both change and have to be derived from the current bounds — which is
-  // why this arithmetic is here rather than in the renderer.
-  //
-  // Both are computed from an absolute cursor position rather than a delta, so a
-  // drag cannot accumulate rounding error. South-west settles rather than
-  // oscillates for the same reason: once the window has moved under the cursor,
-  // the next event reports GRIP_INSET again and resolves to the same width.
-  ipcMain.on('resize-to', (_e, req) => {
+  /**
+   * A grip drag. Unlike the auto-fit this is the user speaking, so it both sets
+   * the size and puts the window into manual height for good.
+   *
+   * Everything is derived from an anchor taken once, at pointerdown: the window's
+   * bounds and the cursor's *screen* position at that instant. Each move then
+   * applies the screen-space delta to that anchor.
+   *
+   * This shape is load-bearing, and the obvious alternative is broken. Deriving
+   * the size from the cursor's position *within the window* — which is what this
+   * did first — measures against a frame the same code is moving: dragging the
+   * south-west grip walks the left edge, so the origin those coordinates are
+   * relative to shifts underneath the drag. Recovering from that needs the
+   * current bounds, and `setBounds` is applied asynchronously by the macOS window
+   * server, so `getBounds()` and the next `pointermove` disagree for a frame and
+   * the error compounds into a visible jump. Windows applies it synchronously,
+   * which is exactly why the fault showed on one platform and not the other.
+   *
+   * An anchored delta has no such loop: nothing it reads is anything it writes.
+   * It also preserves where inside the grip the drag started, rather than
+   * snapping the corner onto the cursor.
+   */
+  ipcMain.on('resize-start', (_e, req) => {
     if (!win || win.isDestroyed() || !req) return;
     if (!Number.isFinite(req.x) || !Number.isFinite(req.y)) return;
-
     const b = win.getBounds();
-    const height = clamp(req.y + GRIP_INSET, MIN_HEIGHT, MAX_SIDE);
+    dragAnchor = {
+      corner: req.corner === 'sw' ? 'sw' : 'se',
+      cursorX: req.x,
+      cursorY: req.y,
+      x: b.x,
+      y: b.y,
+      width: b.width,
+      height: b.height,
+    };
+  });
 
-    let width;
-    let x = b.x;
-    if (req.corner === 'sw') {
-      const right = b.x + b.width;
-      width = clamp(b.width - req.x + GRIP_INSET, MIN_WIDTH, MAX_SIDE);
-      x = right - width;
-    } else {
-      width = clamp(req.x + GRIP_INSET, MIN_WIDTH, MAX_SIDE);
-    }
+  ipcMain.on('resize-end', () => {
+    dragAnchor = null;
+  });
+
+  ipcMain.on('resize-to', (_e, req) => {
+    if (!win || win.isDestroyed() || !req || !dragAnchor) return;
+
+    const next = dragBounds(dragAnchor, { x: req.x, y: req.y }, {
+      minWidth: MIN_WIDTH,
+      minHeight: MIN_HEIGHT,
+      maxSide: MAX_SIDE,
+    });
+    if (!next) return;
 
     if (!userSized) {
       userSized = true;
       sendSizing();
     }
-    appliedHeight = height;
-    win.setBounds({ x, y: b.y, width, height }, false);
+    appliedHeight = next.height;
+    win.setBounds(next, false);
   });
 
   /**

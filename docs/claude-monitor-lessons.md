@@ -280,6 +280,38 @@ not "did we observe it?" but "is there an observation this is standing in front 
 
 `Compacting` is the one piece here genuinely worth having, and no hook currently reports it.
 
+## Never size a window from coordinates relative to that window
+
+The grip drag first computed the new bounds from `clientX`/`clientY` — where the cursor sat *inside*
+the window. On Windows it was fine. On macOS, dragging a corner outward would intermittently snap the
+card down by roughly half, sometimes in both axes and sometimes only vertically, and worse the larger
+the window got.
+
+The shape of the bug is worth keeping, because nothing about it looks wrong when you read it.
+Window-relative coordinates are measured from the window's own origin, and the south-west grip
+*moves* that origin — so the input to each frame depended on the output of the last one. Squaring
+that needs the live bounds, and `setBounds` on macOS is applied asynchronously by the window server:
+`getBounds()` and the next `pointermove` therefore describe the window at two different instants, and
+the disagreement feeds back rather than cancelling. Windows applies `setBounds` synchronously, so the
+same code converged there. **A platform-specific symptom from platform-neutral-looking code is the
+signature of a feedback loop, not of a platform quirk.**
+
+The fix is not better correction, it is removing the loop: take an anchor at `pointerdown` — the
+window's bounds plus the cursor's **screen** position — and resolve every later move as a delta
+against it. Nothing read is anything written, so there is no path for a stale frame to compound. It
+fixes a second bug for free: the old version snapped the dragged corner onto the cursor, so merely
+pressing a grip resized the window before any drag happened.
+
+Two details of the anchored form are load-bearing. The held edge must be derived from the anchor's
+edge (`anchor.x + anchor.width - width`) rather than the live one, or a dropped frame walks it. And
+clamping to a minimum has to preserve that edge too, or dragging past the minimum drifts the side
+that was supposed to be nailed down.
+
+The arithmetic now lives in `src/pointer.js` beside `localPoint`, for the same reason that one does:
+pure geometry, testable without an Electron window. It shipped without a test the first time, and the
+bug shipped with it — `test/pointer.test.js` now covers the zero-delta press, both corners, the
+held-edge invariant, clamping, and idempotence.
+
 ## Open questions
 
 **Windows shows chat-level activity but no subagent activity.** Observed over a day of soak testing:

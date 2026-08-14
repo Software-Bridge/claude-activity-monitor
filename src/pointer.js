@@ -40,4 +40,53 @@ function localPoint(bounds, cursor) {
   return { x, y };
 }
 
-module.exports = { localPoint };
+/**
+ * The window a grip drag should produce, from the anchor taken at pointerdown and
+ * where the cursor is now. Both cursor positions are in *screen* coordinates.
+ *
+ * The anchor is the whole point. Sizing a window from the cursor's position
+ * *inside* it measures against a frame the same gesture is moving — drag the
+ * south-west grip and the left edge walks, so the origin shifts underneath the
+ * drag. Correcting for that needs the window's live bounds, and macOS applies
+ * `setBounds` asynchronously, so the bounds read back and the next pointer event
+ * disagree for a frame; the discrepancy feeds back and lands as a visible jump.
+ * Windows applies it synchronously and so never showed the fault.
+ *
+ * Working from a fixed anchor removes the loop entirely: nothing read here is
+ * anything the caller writes. It also preserves where inside the grip the drag
+ * started, instead of snapping the corner onto the cursor.
+ *
+ * Which edges move is the corner's business: 'sw' holds the right edge still and
+ * spends the whole width change on the left one, anything else holds the left.
+ * The top edge never moves either way — these are bottom corners.
+ */
+function dragBounds(anchor, cursor, limits) {
+  if (!anchor || !cursor || !limits) return null;
+  for (const n of [anchor.cursorX, anchor.cursorY, anchor.x, anchor.y, anchor.width, anchor.height]) {
+    if (!finite(n)) return null;
+  }
+  if (!finite(cursor.x) || !finite(cursor.y)) return null;
+
+  const { minWidth, minHeight, maxSide } = limits;
+  const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, Math.round(n)));
+
+  const dx = cursor.x - anchor.cursorX;
+  const dy = cursor.y - anchor.cursorY;
+
+  const height = clamp(anchor.height + dy, minHeight, maxSide);
+
+  let width;
+  let x = anchor.x;
+  if (anchor.corner === 'sw') {
+    width = clamp(anchor.width - dx, minWidth, maxSide);
+    // Derived from the anchor's right edge, never the live one — that is what
+    // keeps the held edge exactly still even when a move is dropped.
+    x = anchor.x + anchor.width - width;
+  } else {
+    width = clamp(anchor.width + dx, minWidth, maxSide);
+  }
+
+  return { x, y: anchor.y, width, height };
+}
+
+module.exports = { localPoint, dragBounds };

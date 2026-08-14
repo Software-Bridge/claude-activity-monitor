@@ -15,9 +15,13 @@ contextBridge.exposeInMainWorld('monitor', {
   quit: () => ipcRenderer.send('quit'),
   connect: () => ipcRenderer.send('connect'),
   resize: (height) => ipcRenderer.send('resize', height),
-  // A grip drag: a size the user is choosing, not one the content implies. Sent
-  // as the cursor's position inside the window plus which corner has hold of it.
-  resizeTo: (corner, x, y) => ipcRenderer.send('resize-to', { corner, x, y }),
+  // A grip drag: a size the user is choosing, not one the content implies.
+  // Positions are the cursor's on *screen*, not inside the window — the window
+  // moves during the drag, so window-relative coordinates would be measured
+  // against a shifting origin. See the anchor logic in main.js.
+  resizeStart: (corner, x, y) => ipcRenderer.send('resize-start', { corner, x, y }),
+  resizeTo: (x, y) => ipcRenderer.send('resize-to', { x, y }),
+  resizeEnd: () => ipcRenderer.send('resize-end'),
   // Jump to the editor window a session is running in.
   reveal: (cwd) => ipcRenderer.send('reveal', cwd),
 });

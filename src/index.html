@@ -774,11 +774,15 @@
       // mouse-moved from a window that is not frontmost, but a button held down
       // routes to whoever took the pointerdown, which is the one case this needs.
       //
-      // Only the cursor's position within the window is sent. Which edges that
-      // position moves depends on the corner, and the window's own geometry is
-      // needed to work it out, so the arithmetic lives in main.js where the
-      // bounds are. Sending a position rather than a delta is what keeps a long
-      // drag from accumulating drift.
+      // Screen coordinates, never window-relative ones. The drag moves the window,
+      // so `clientX`/`clientY` would be measured against an origin that shifts
+      // underneath the gesture — and recovering from that needs the live bounds,
+      // which macOS updates a frame behind. `screenX`/`screenY` are fixed to the
+      // display and owe nothing to where the window currently is, so main.js can
+      // resolve every move against the anchor it took at pointerdown.
+      //
+      // Ending the drag is reported too: the anchor is what authorises a resize
+      // at all, so dropping it is what stops a stray move from moving anything.
       let gripping = null;
 
       for (const grip of document.querySelectorAll('.grip')) {
@@ -786,16 +790,18 @@
           e.preventDefault();
           gripping = grip.dataset.corner;
           grip.setPointerCapture(e.pointerId);
+          window.monitor.resizeStart(gripping, e.screenX, e.screenY);
         });
 
         grip.addEventListener('pointermove', (e) => {
           if (!gripping) return;
-          window.monitor.resizeTo(gripping, e.clientX, e.clientY);
+          window.monitor.resizeTo(e.screenX, e.screenY);
         });
 
         const end = (e) => {
           if (!gripping) return;
           gripping = null;
+          window.monitor.resizeEnd();
           try {
             grip.releasePointerCapture(e.pointerId);
           } catch {
