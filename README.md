@@ -103,6 +103,53 @@ activity on a terminal that has handed back, and nothing left live after teardow
 test that covers the whole chain, and the only one that runs twelve actors at each other
 concurrently.
 
+## Recording a real session
+
+A scenario is invented work. A *capture* is work that actually happened — your own
+sessions, with their real ordering and real timing — replayed later as a demo.
+
+```sh
+npm run record start          # begin capturing
+npm run record status         # what has been captured so far
+npm run record stop <name>    # seal it and put it away
+```
+
+The switch is the existence of `~/.claude-agent-ui/recording.jsonl`: `src/hook.js`
+appends to it when it is there and does nothing when it is not. So a capture starts
+and stops mid-session, with no restart of Claude Code, no environment variable and
+no change to `settings.json`. When nobody is recording the cost is one `existsSync`
+per event, and the whole thing is wrapped so that a failure to record can never fail
+the hook — a monitor must not break what it monitors, and a recorder must not break
+the monitor.
+
+`stop` **seals** the capture, and has to run while the session's files are still
+around. `SubagentStart` carries no description — the window reads it from the
+`meta.json` Claude Code writes beside the transcript — so sealing resolves each one
+from disk and writes it into the recording. After that the recording stands alone.
+
+Sealed captures land in `~/.claude-agent-ui/recordings/`, deliberately outside this
+repo: one carries the real working directories, file names and prompt text of
+whatever you were doing. Scrub before committing anything derived from one.
+
+Replaying drives the same `src/hook.js` the demo does:
+
+```sh
+node test/replay-activity.js --file=<capture> --live
+node test/replay-activity.js --file=<capture> --live --speed=4 --loop --max-gap=2
+```
+
+Two things in a capture cannot be replayed as they stand. `transcript_path` points
+into the recording machine's `~/.claude/projects`, so the replay rebuilds an
+equivalent tree under a temp root and repoints every payload at it — otherwise
+descriptions never resolve and every agent is reaped as silent. And real elapsed
+time is not watchable: a working session spends minutes between events, so gaps are
+capped by `--max-gap` and the timeline scaled by `--speed`. Ordering is never
+changed.
+
+`npm test` covers the round trip: run the demo with recording on, seal it, replay
+it, and assert the window ends up with the same picture — same sessions, same
+subagents, same descriptions.
+
 ## Building
 
 ```sh

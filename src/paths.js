@@ -31,6 +31,19 @@ const LIVE_DIR = path.join(DATA_DIR, 'live');
 const SESSIONS_DIR = path.join(DATA_DIR, 'sessions');
 
 /**
+ * Raw capture of the event stream, for turning a real session into a replayable
+ * demo. Its *existence* is the switch: the hook appends to it when it is there
+ * and does nothing when it is not, so a capture starts and stops without
+ * restarting Claude Code or touching settings.json. Lives beside the live state
+ * rather than in the repo because a capture of real work carries real cwds,
+ * real file names and real prompt text.
+ */
+const RECORDING_FILE = path.join(DATA_DIR, 'recording.jsonl');
+
+/** Sealed captures, once descriptions have been resolved into them. */
+const RECORDINGS_DIR = path.join(DATA_DIR, 'recordings');
+
+/**
  * Ids reach path.join from a hook payload and from file contents. path.join
  * normalizes "..", so an id may not contain a separator — and on Windows that
  * means backslash as well as forward slash, which makes the traversal surface
@@ -84,6 +97,8 @@ module.exports = {
   DATA_DIR,
   LIVE_DIR,
   SESSIONS_DIR,
+  RECORDING_FILE,
+  RECORDINGS_DIR,
   liveFileFor,
   sessionFileFor,
   subagentDir,

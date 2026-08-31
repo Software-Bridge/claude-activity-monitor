@@ -35,6 +35,25 @@ silence must not count against an agent at all. All of it is reachable directly
 — the module is pure and already takes an injectable `now` — so those want unit
 tests rather than more demo scenarios.
 
+## Capture and replay
+
+Added after the first real capture (`scripts/record.js`, `test/replay-activity.js`).
+Known limits:
+
+- **Sealing is a race against cleanup.** Descriptions are resolved from the
+  `meta.json` files Claude Code leaves beside the transcript, so a capture sealed
+  after those are gone replays with unnamed agents. Real sessions keep them for a
+  long time; the demo driver deletes them on teardown, which is why the round-trip
+  test runs it with `--keep`. Capturing the description at record time is not
+  possible — it is not in the payload, and is not yet on disk when `SubagentStart`
+  fires.
+- **A capture records every session, not one.** The switch is global, so anything
+  else you are running lands in the same file. There is no `--session` filter yet.
+- **No scrubbing tool.** A capture carries real cwds, file names and prompt text,
+  and turning one into something committable is currently a manual pass.
+- **Replay keeps the captured session ids.** Fine for a demo, but two replays of the
+  same capture into the same data directory would collide.
+
 ## Packaging and release
 
 - **macOS build.** Now exercised: `npm run dist` on a Mac produces both DMGs

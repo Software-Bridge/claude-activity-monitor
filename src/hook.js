@@ -22,7 +22,13 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { LIVE_DIR, SESSIONS_DIR, liveFileFor, sessionFileFor } = require('./paths');
+const {
+  LIVE_DIR,
+  SESSIONS_DIR,
+  RECORDING_FILE,
+  liveFileFor,
+  sessionFileFor,
+} = require('./paths');
 
 // Deliberately not under DATA_DIR: an unwritable DATA_DIR is the likeliest thing
 // to need reporting, and a breadcrumb we cannot write is no breadcrumb at all.
@@ -88,6 +94,25 @@ function updateSession(sessionId, payload, patch) {
 
   fs.mkdirSync(SESSIONS_DIR, { recursive: true });
   writeAtomic(file, JSON.stringify(next));
+}
+
+/**
+ * Tee of the raw event stream, so a real session can be replayed later as a demo
+ * (see scripts/record.js and test/replay-activity.js). Off unless the
+ * destination already exists, which costs one existsSync when nobody is
+ * recording and means a capture can be started mid-session.
+ *
+ * Its own try/catch, and never allowed to throw: a monitor must not break the
+ * thing it monitors, and a recorder must not break the monitor. A capture is
+ * never worth a failed subagent spawn.
+ */
+function record(payload) {
+  try {
+    if (!fs.existsSync(RECORDING_FILE)) return;
+    fs.appendFileSync(RECORDING_FILE, `${JSON.stringify({ t: Date.now(), payload })}\n`);
+  } catch {
+    /* a lost line is better than a broken hook */
+  }
 }
 
 function handleSubagent(event, payload) {
@@ -176,6 +201,10 @@ function main(raw) {
 
   // JSON.parse("null") succeeds, as does any bare literal.
   if (!payload || typeof payload !== 'object') return;
+
+  // Before the dispatch, so the capture is the wire truth rather than the
+  // subset this version of the hook happens to act on.
+  record(payload);
 
   const event = payload.hook_event_name;
 
