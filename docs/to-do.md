@@ -49,8 +49,11 @@ Known limits:
   fires.
 - **A capture records every session, not one.** The switch is global, so anything
   else you are running lands in the same file. There is no `--session` filter yet.
-- **No scrubbing tool.** A capture carries real cwds, file names and prompt text,
-  and turning one into something committable is currently a manual pass.
+- **Scrubbing is deliberately manual.** `scripts/scrub-recording.js` reports what a
+  capture contains and applies a rename map, but it never guesses what is
+  sensitive — a tool that decided that for you would be trusted, and would
+  eventually be wrong in the direction that matters. Someone still has to read the
+  report and write the map.
 - **Replay keeps the captured session ids.** Fine for a demo, but two replays of the
   same capture into the same data directory would collide.
 
