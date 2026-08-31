@@ -53,6 +53,26 @@ const SILENT_FOR_MS = 10 * 60 * 1000;
 const WAITING_GRACE_MS = 30 * 60 * 1000;
 
 /**
+ * A session whose `SessionEnd` has fired is over, and gets only long enough on
+ * screen to be seen going.
+ *
+ * The long feedback grace above exists for a session that finished its turn and
+ * is waiting on *you* — it is holding a question open. An ended session is not
+ * waiting for anything, so holding it for half an hour is not patience, it is
+ * litter: the window fills with rows for chats that closed, including the very
+ * short-lived ones a non-interactive `claude` run leaves behind.
+ *
+ * Acting on `SessionEnd` is safe here even though it is documented as
+ * unreliable, and the reason is structural rather than optimistic. Every session
+ * hook upserts, so a record removed in error is rebuilt in full by that
+ * session's next event — a premature end costs a row that returns on the next
+ * tool call, not a session that vanishes for good. Treating it as authoritative
+ * is only unsafe where removal is permanent, and here it is not. The grace is
+ * seconds rather than zero purely so an early fire cannot flicker the row.
+ */
+const ENDED_GRACE_MS = 15 * 1000;
+
+/**
  * A session still marked "working" but silent this long has died without a Stop —
  * a crash, a closed terminal. Give it the same long benefit of the doubt a
  * subagent gets before dropping it.
@@ -245,7 +265,14 @@ function readSessions(now, agentSessionIds) {
     const working = s.state === 'working';
     const hasAgents = agentSessionIds.has(s.session_id);
 
-    const limit = working ? WORKING_SILENT_MS : WAITING_GRACE_MS;
+    // Three clocks, not two: a working session may have crashed and gets the long
+    // benefit of the doubt, a session awaiting your reply is held, and one that
+    // announced its own end is neither of those.
+    const limit = working
+      ? WORKING_SILENT_MS
+      : s.waiting === 'ended'
+        ? ENDED_GRACE_MS
+        : WAITING_GRACE_MS;
     if (!hasAgents && quietFor > limit) {
       // Idle past its grace (or a working session gone silent for good). Unlike a
       // subagent this file is ours to remove: nothing else will, and a stale one

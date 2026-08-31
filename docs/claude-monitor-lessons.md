@@ -63,7 +63,20 @@ does all reaping. This makes removal robust to a hook that fires early, late, or
 
 **Reaping runs on per-state clocks.** A session awaiting feedback is kept half an hour;
 a session still marked working gets the long silence window (ten minutes) before it is presumed
-crashed. A session with live subagents is never reaped — its children are proof of life.
+crashed. A session that has announced its own end is held fifteen seconds and no longer. A session
+with live subagents is never reaped — its children are proof of life.
+
+**`SessionEnd` is unreliable, but that does not make it unusable — it depends on what you do with
+it.** The instinct was to distrust it everywhere, so an ended session simply fell into the long
+feedback grace. Over a soak that filled the window with litter: chats closed half an hour ago, and
+rows for the sub-second sessions a non-interactive `claude` run leaves behind (one showed up as a
+project called `T`, being a session whose cwd was `$TMPDIR`). None of them was waiting on anybody.
+
+What makes acting on it safe is structural, not optimistic: every session hook upserts, so a record
+removed in error is rebuilt in full by that session's next event. A premature end costs a row that
+comes back on the next tool call. The rule worth keeping is that **an unreliable signal is safe to
+act on exactly where the action is reversible** — it is still not trusted for anything permanent,
+which is why `SessionEnd` still does not delete anything itself.
 
 That half hour was a minute until it was tested in anger, and the correction is worth keeping
 because the original reasoning inverted the tool's purpose. Silence past a short grace was read as

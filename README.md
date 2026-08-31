@@ -147,7 +147,8 @@ the protocol; approve it with *always allow* and later clicks are silent.
 Removing a session is left entirely to the window, never to a hook: `SessionEnd` fires
 unreliably in the VSCode extension (sometimes early, sometimes not at all), so instead every
 terminal state just starts an idle clock, and the window reaps a session once it has been silent
-past its grace — thirty minutes while awaiting feedback, ten while nominally working (a crash).
+past its grace. Three clocks, by state: fifteen seconds once `SessionEnd` has fired, thirty
+minutes while awaiting feedback, ten while nominally working (a crash).
 
 The awaiting-feedback grace is long on purpose. A session waiting on you does not get less worth
 showing as it waits, and the point at which a floating monitor earns its place is exactly the point
