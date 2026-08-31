@@ -15,6 +15,9 @@
         --wait-rgb: 240, 199, 122;
         /* Needs permission: a warmer alert tone for the one state you must act on. */
         --alert-rgb: 233, 132, 132;
+        /* Finished its turn and asking nothing: reads as settled rather than as a
+           summons, so it must not borrow the amber that means you are needed. */
+        --done-rgb: 143, 199, 164;
 
         --bg: rgba(38, 52, 77, 0.94);
         --bg-header: rgba(51, 68, 97, 0.6);
@@ -29,6 +32,7 @@
         --accent-soft: #f0b294;
         --wait: rgb(var(--wait-rgb));
         --alert: rgb(var(--alert-rgb));
+        --done: rgb(var(--done-rgb));
 
         /* The hover pane reads as a different surface, not a darker strip of the
            same one: the hue swings from the card's blue-slate round to indigo,
@@ -210,6 +214,7 @@
       }
       .state-dot.waiting { background: var(--wait); }
       .state-dot.permission { background: var(--alert); }
+      .state-dot.done { background: var(--done); }
 
       .session-project {
         font-size: 12px;
@@ -230,6 +235,9 @@
       }
       .session-status.waiting { color: var(--wait); font-weight: 600; }
       .session-status.permission { color: var(--alert); font-weight: 600; }
+      /* Deliberately not bold: finished work is a fact to notice in passing, not
+         a thing to be pulled towards. */
+      .session-status.done { color: var(--done); }
 
       /* The live tool line and the subagents share one indent, so they read as a
          single list hanging off the window heading above them. */
@@ -413,12 +421,28 @@
       }
 
       // What a waiting session is waiting on, worded for the person who has to act.
+      // Two different things get lumped together as "not working", and calling
+      // both of them "waiting for you" cost the badge its meaning. A permission
+      // prompt or an idle nudge is a summons: something is blocked until you act.
+      // The end of a turn usually is not — Claude finished, and may be asking
+      // nothing at all. Saying "waiting for you" to a session that simply
+      // concluded trains you to ignore the word when it is real.
       const WAITING_LABEL = {
         permission: 'needs permission',
         idle: 'waiting for you',
-        turn: 'waiting for you',
+        turn: 'concluded',
         ended: 'ended',
         new: 'ready',
+      };
+
+      // Colour follows that same split rather than the state machine: summonses
+      // are loud, reports are quiet.
+      const TONE = {
+        permission: 'permission',
+        idle: 'waiting',
+        turn: 'done',
+        ended: 'done',
+        new: 'done',
       };
 
       // A working session with no tool line yet still needs a word, for the same
@@ -500,8 +524,7 @@
         head.className = 'session-head';
         head.dataset.key = 's:' + s.id;
 
-        const permission = s.state !== 'working' && s.waiting === 'permission';
-        const tone = s.state === 'working' ? 'working' : permission ? 'permission' : 'waiting';
+        const tone = s.state === 'working' ? 'working' : TONE[s.waiting] || 'done';
 
         const dot = document.createElement('span');
         dot.className = 'state-dot ' + tone;
@@ -516,7 +539,7 @@
           status.textContent = elapsed(s.startedAt);
         } else {
           status.className = 'session-status ' + tone;
-          status.textContent = WAITING_LABEL[s.waiting] || 'waiting for you';
+          status.textContent = WAITING_LABEL[s.waiting] || 'concluded';
         }
 
         head.append(dot, project, status);
@@ -603,7 +626,7 @@
             'state',
             s.state === 'working'
               ? 'working · ' + elapsed(s.startedAt)
-              : WAITING_LABEL[s.waiting] || 'waiting for you'
+              : WAITING_LABEL[s.waiting] || 'concluded'
           )
         );
 
