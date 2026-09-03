@@ -62,7 +62,10 @@ function toolDetail(input) {
     null;
   if (typeof raw !== 'string') return null;
   const one = raw.replace(/\s+/g, ' ').trim();
-  return one.length > 80 ? one.slice(0, 79) + '…' : one || null;
+  // Generous, because the window trims for display but cannot recover what was
+  // never written. A single `VAR=/long/path` preamble runs past eighty
+  // characters on its own, and truncating there loses the tool name outright.
+  return one.length > 300 ? one.slice(0, 299) + '…' : one || null;
 }
 
 // Read-modify-write the session record so one event's fields (the description of

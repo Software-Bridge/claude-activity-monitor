@@ -557,7 +557,10 @@
             tool.className = 'tool';
             tool.textContent = s.activity.tool;
             act.append(document.createTextNode('running · '), tool);
-            if (s.activity.detail) act.append(document.createTextNode(' ' + s.activity.detail));
+            // The row takes the trimmed form; the pane below keeps the whole
+            // command, so nothing is lost by leading with the tool.
+            const shown = s.activity.lead || s.activity.detail;
+            if (shown) act.append(document.createTextNode(' ' + shown));
           } else {
             act.textContent = verbFor(s.id) + '…';
           }

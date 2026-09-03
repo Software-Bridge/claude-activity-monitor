@@ -11,7 +11,7 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node test/hooks-config.test.js && node test/pointer.test.js && node test/demo-activity.test.js && node test/replay-activity.test.js && node test/hover.test.js",
+    "test": "node test/hooks-config.test.js && node test/pointer.test.js && node test/command.test.js && node test/demo-activity.test.js && node test/replay-activity.test.js && node test/hover.test.js",
     "demo": "node test/demo-activity.js --live",
     "install-hooks": "node scripts/install-hooks.js",
     "uninstall-hooks": "node scripts/install-hooks.js --remove",

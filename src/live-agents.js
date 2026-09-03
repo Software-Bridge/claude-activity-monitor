@@ -17,6 +17,7 @@ const {
   metaPathFor,
   transcriptPathFor,
 } = require('./paths');
+const { leadCommand } = require('./command');
 
 /**
  * A killed agent never fires SubagentStop, so its file is never removed. Rather
@@ -84,6 +85,17 @@ const GARBAGE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 // The description is immutable once written, so it is worth never re-reading.
 const descriptions = new Map();
+
+/**
+ * What the row shows against what was recorded. `lead` is the command with any
+ * preamble skipped so the tool is visible in a narrow row; `detail` is left
+ * exactly as the hook wrote it, because the hover pane shows that.
+ */
+function activityOf(activity) {
+  if (!activity || typeof activity !== 'object') return null;
+  const detail = typeof activity.detail === 'string' ? activity.detail : null;
+  return { ...activity, lead: detail ? leadCommand(detail) : null };
+}
 
 function projectOf(cwd) {
   return cwd ? cwd.split(/[\\/]/).filter(Boolean).pop() : null;
@@ -288,7 +300,7 @@ function readSessions(now, agentSessionIds) {
       title: s.title || null,
       state: working ? 'working' : 'waiting',
       waiting: working ? null : s.waiting || 'turn',
-      activity: s.activity && typeof s.activity === 'object' ? s.activity : null,
+      activity: activityOf(s.activity),
       startedAt: s.startedAt,
       agents: [],
     });

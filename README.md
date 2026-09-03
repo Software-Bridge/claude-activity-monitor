@@ -31,9 +31,11 @@ pair reliably: the VSCode extension never fires the `Notification` hook, so a se
 permission prompt there is indistinguishable from one still running the command it asked about, and
 shows as working.
 
-Rows are narrow, so anything too long to fit is cut off. Point at a row — no clicking, and the
-window never takes focus — and a pane opens along the bottom with the whole of it: the full path,
-the full command, every subagent description. It keeps up with the work while you read: a session
+Rows are narrow, so anything too long to fit is cut off. A shell command that opens with a `cd`, a
+variable assignment or an `env` wrapper is shown from its tool onward behind a `…` — otherwise the
+one word saying what is actually running (`node`, `npm`, `python3`) is exactly the part that gets
+cut. Point at a row — no clicking, and the window never takes focus — and a pane opens along the
+bottom with the whole of it: the full path, the command as recorded, every subagent description. It keeps up with the work while you read: a session
 you are pointing at updates in place as its tool changes, and a subagent that finishes hands the
 pane to whatever takes its slot.
 
