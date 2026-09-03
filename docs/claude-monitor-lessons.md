@@ -325,6 +325,74 @@ pure geometry, testable without an Electron window. It shipped without a test th
 bug shipped with it — `test/pointer.test.js` now covers the zero-delta press, both corners, the
 held-edge invariant, clamping, and idempotence.
 
+## The first long soak, and the three faults it found
+
+Everything below came out of leaving the window up for days across several projects, which is the
+only way most of it could have surfaced. The smoke test runs thirty seconds and asserts on a
+snapshot; none of these are wrong in a snapshot. They are failures of *accumulation* and of
+*wording*, and both need elapsed time and a real person reading the thing to show up at all.
+
+Worth stating plainly because it shapes where to spend effort: **this tool's failure modes are
+mostly not crashes.** It kept working throughout. It was just progressively less worth looking at.
+
+**Fault 1 — litter.** Rows accrued for sessions that had already ended: chats closed half an hour
+earlier, a duplicate of a project already listed, and one row labelled `T`, which turned out to be a
+sub-second non-interactive `claude` run whose cwd was `$TMPDIR` and whose project name is therefore
+that directory's basename. Cause and fix are in *`SessionEnd` is unreliable...* above. The general
+shape is worth naming: **a monitor accumulates, so every row needs an answer to "what removes
+this?"** — and "the long grace" is not an answer, it is a delay.
+
+**Fault 2 — a badge that cried wolf.** Every non-working session read *waiting for you*, in amber.
+But that one phrase was covering two unrelated situations: a permission prompt or idle nudge, where
+something is genuinely blocked until you act, and the plain end of a turn, where Claude finished and
+may be asking nothing whatsoever. The second is overwhelmingly the common case, so the badge was
+usually crying wolf — and a summons you learn to scroll past is worse than no summons, because it
+also devalues the real ones sitting next to it.
+
+The end of a turn now reads **concluded**, in a calm green, and not in bold. *needs permission* and
+*waiting for you* keep the loud colours and the weight. The rule this is an instance of:
+**wording and colour should follow what is being asked of the reader, not which state the machine is
+in.** Those are different partitions of the same data, and the state machine's one is the wrong one
+to paint — `Stop` is a single event, but what it means for you depends entirely on whether anything
+is blocked behind it.
+
+**Fault 3 — the permission prompt is invisible, and this is now settled.** The complaint was that a
+session blocked on *"is it ok to run X?"* shows as working, with the head of the command — no badge,
+no colour change. That display is *correct given the evidence*: `PreToolUse` fired carrying the
+command, `PostToolUse` has not, and by every observable signal the session is working. The monitor
+cannot tell a blocked prompt from a slow build.
+
+It is not for want of looking. Recorded so nobody searches twice:
+
+| Candidate signal | Checked | Result |
+| --- | --- | --- |
+| `Notification` hook | Registered all soak, mapped straight to `needs permission` | Never fired. The badge never once appeared |
+| Session transcript | All 1055 records; 53 lines matching /permission/i | Only `permissionMode: "default"` fields and message prose. No prompt event |
+| `type: "mode"` records | All 47 | Every one `normal`. Does not change when a prompt opens |
+| `type: "system"` records | All subtypes | Only `stop_hook_summary` and `api_error` |
+| `~/.claude/ide/*.lock` | Contents | `pid`, `workspaceFolders`, `ideName`, `transport`, `authToken`. No session state |
+| `~/.claude/sessions/*.json` | Contents | `pid`, `sessionId`, `cwd`, `version`, `peerFeatures`. No prompt state |
+
+One honest caveat on the first row: that is strong indirect evidence, not an instrumented payload
+dump. The hook was installed and its badge never appeared over days of use, which is conclusive
+enough to act on but is not the same as having watched stdin. Note also the version drift — the hook
+matrix at the top was verified at v2.1.207, the extension bundle on this machine is v2.1.226, and
+`~/.claude/sessions/*.json` reports the CLI as v2.1.251. The behaviour has not changed across that
+span, but a future version could, and a `Notification` payload dump is the cheap way to re-check.
+
+**The heuristic was considered and rejected**, which is the part worth recording. One could flag a
+tool as probably-blocked after N seconds with no `PostToolUse`. It cannot distinguish a permission
+prompt from a long test run, so it would put a false *needs permission* on a two-minute build — and
+that is precisely the failure of Fault 2, reintroduced deliberately after having just been fixed.
+It also violates the rule the spinner-verb section arrived at independently: **never present an
+inference in the place where the reader has learned to expect an observation.** Showing the running
+command is less satisfying and more truthful.
+
+Actually fixing it needs a signal that does not exist today: a companion VSCode extension, which can
+see the prompt directly, or `Notification` firing in the extension the way it already does in the
+terminal CLI. Both are outside what hooks can reach, which is why this sits here rather than in the
+to-do.
+
 ## Open questions
 
 **Windows shows chat-level activity but no subagent activity.** Observed over a day of soak testing:

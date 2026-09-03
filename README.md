@@ -11,19 +11,25 @@ of the screen, driven by Claude Code hooks.
 ┌──────────────────────────────────────────┐
 │ ● Claude Activity Monitor    1 active  × │
 ├──────────────────────────────────────────┤
-│  my-api                        2m  WORKING│
-│  ⋯ Bash  npm test                         │
-│  │ Audit the payment module               │
-│  │ Explore                           1m 4s│
+│  my-api                              2m  │
+│  running · Bash  npm test                │
+│  Audit the payment module         1m 4s  │
+│  Explore                            12s  │
 ├──────────────────────────────────────────┤
-│  docs-site                    45s  WAITING│
-│    waiting for you                        │
+│  docs-site                    concluded  │
 └──────────────────────────────────────────┘
 ```
 
-Each section is one chat window. A session that has finished its turn is badged **waiting for
-you** and held until you deal with it; leave it half an hour and it drops off as closed. A session actively
-working shows the tool it is running and any subagents beneath it.
+Each section is one chat window. A session actively working shows the tool it is running and any
+subagents beneath it. One that has finished its turn reads **concluded**, in a quiet green, and is
+held until you deal with it; leave it half an hour and it drops off as closed.
+
+The badge distinguishes being *told* from being *asked*. **concluded** is a report — Claude stopped,
+and may want nothing from you. **waiting for you** and **needs permission** are summonses, in amber
+and red, and mean something is blocked until you act. Only the terminal CLI can raise the second
+pair reliably: the VSCode extension never fires the `Notification` hook, so a session sitting on a
+permission prompt there is indistinguishable from one still running the command it asked about, and
+shows as working.
 
 Rows are narrow, so anything too long to fit is cut off. Point at a row — no clicking, and the
 window never takes focus — and a pane opens along the bottom with the whole of it: the full path,
