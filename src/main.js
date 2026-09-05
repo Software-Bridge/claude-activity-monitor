@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, dialog, ipcMain, screen, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, powerSaveBlocker, screen, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { DATA_DIR } = require('./paths');
@@ -176,6 +176,21 @@ function createWindow() {
   });
 }
 
+// Held only while something is actually working, so a long build or copy that a
+// session is running is not cut short by the machine idle-sleeping. Waiting and
+// idle sessions do not hold it. 'prevent-app-suspension' keeps compute alive but
+// deliberately lets the display sleep — a dark screen does not stop work.
+let wakeBlocker = null;
+function setKeepAwake(active) {
+  const held = wakeBlocker !== null && powerSaveBlocker.isStarted(wakeBlocker);
+  if (active && !held) {
+    wakeBlocker = powerSaveBlocker.start('prevent-app-suspension');
+  } else if (!active && held) {
+    powerSaveBlocker.stop(wakeBlocker);
+    wakeBlocker = null;
+  }
+}
+
 function push(force = false) {
   if (!win || win.isDestroyed()) return;
 
@@ -188,6 +203,12 @@ function push(force = false) {
     // window down — skip this tick.
     return;
   }
+
+  // Evaluated before the no-change short-circuit below so it stays correct even
+  // when the payload is identical. A session is "working" while a tool call is in
+  // flight (PreToolUse fired, PostToolUse not yet), which is exactly the window a
+  // long-running command occupies; live subagents count too.
+  setKeepAwake(sessions.some((s) => s.state === 'working' || (s.agents && s.agents.length > 0)));
 
   const payload = JSON.stringify(sessions);
   if (!force && payload === lastPayload) return;
