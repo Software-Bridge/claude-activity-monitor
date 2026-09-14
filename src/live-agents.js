@@ -245,6 +245,14 @@ function readSessions(now, agentSessionIds) {
     const working = s.state === 'working';
     const hasAgents = agentSessionIds.has(s.session_id);
 
+    // Subprocesses the session launched and left running past its turn. The record
+    // stays 'waiting' (Claude itself is idle), so this keeps the long feedback
+    // grace rather than the short crash window — a install can outlast 10 minutes.
+    const background = Array.isArray(s.background)
+      ? s.background.filter((b) => b && typeof b === 'object')
+      : [];
+    const hasBackground = background.length > 0;
+
     const limit = working ? WORKING_SILENT_MS : WAITING_GRACE_MS;
     if (!hasAgents && quietFor > limit) {
       // Idle past its grace (or a working session gone silent for good). Unlike a
@@ -254,14 +262,28 @@ function readSessions(now, agentSessionIds) {
       continue;
     }
 
+    // A detached subprocess still running reads as busy, not as "your move": show
+    // the row as active with a "running subprocess" line, not the waiting badge.
+    const displayWorking = working || hasBackground;
+    const ownActivity = s.activity && typeof s.activity === 'object' ? s.activity : null;
+    const bgActivity = hasBackground
+      ? {
+          background: true,
+          detail:
+            background.length > 1
+              ? `${background.length} subprocesses`
+              : background[0].detail || null,
+        }
+      : null;
+
     sessions.push({
       id: s.session_id,
       cwd: s.cwd,
       project: projectOf(s.cwd),
       title: s.title || null,
-      state: working ? 'working' : 'waiting',
-      waiting: working ? null : s.waiting || 'turn',
-      activity: s.activity && typeof s.activity === 'object' ? s.activity : null,
+      state: displayWorking ? 'working' : 'waiting',
+      waiting: displayWorking ? null : s.waiting || 'turn',
+      activity: ownActivity || bgActivity,
       startedAt: s.startedAt,
       agents: [],
     });

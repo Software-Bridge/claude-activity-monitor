@@ -59,6 +59,17 @@ function toolDetail(input) {
   return one.length > 80 ? one.slice(0, 79) + '…' : one || null;
 }
 
+// The subprocesses a session left running after its turn ended. Claude Code lists
+// them on the Stop payload; a backgrounded shell command returns from its tool
+// call immediately, so this is the only place their continued life shows up.
+// Subagents are excluded — they already get their own rows from LIVE_DIR.
+function runningSubprocesses(payload) {
+  const tasks = Array.isArray(payload.background_tasks) ? payload.background_tasks : [];
+  return tasks
+    .filter((t) => t && t.status === 'running' && t.type !== 'subagent')
+    .map((t) => ({ detail: t.description || toolDetail({ command: t.command }) || null }));
+}
+
 // Read-modify-write the session record so one event's fields (the description of
 // the tool in flight, say) don't clobber another's (the start time). A missing
 // or unparseable file just means "start fresh".
@@ -135,30 +146,42 @@ function handleSession(event, payload) {
       updateSession(sid, payload, {}); // upsert; state falls to 'waiting' if new
       break;
     case 'UserPromptSubmit':
-      updateSession(sid, payload, { state: 'working', waiting: null, activity: null });
+      updateSession(sid, payload, { state: 'working', waiting: null, activity: null, background: null });
       break;
     case 'PreToolUse':
       updateSession(sid, payload, {
         state: 'working',
         waiting: null,
         activity: { tool: payload.tool_name || 'tool', detail: toolDetail(payload.tool_input) },
+        background: null,
       });
       break;
     case 'PostToolUse':
-      updateSession(sid, payload, { state: 'working', waiting: null, activity: null });
+      updateSession(sid, payload, { state: 'working', waiting: null, activity: null, background: null });
       break;
-    case 'Stop':
-      updateSession(sid, payload, { state: 'waiting', waiting: 'turn', activity: null });
+    case 'Stop': {
+      // The turn is genuinely over — but a backgrounded command may run on. State
+      // stays 'waiting' (Claude is not working) so the 30-min feedback grace
+      // applies rather than the 10-min crash window; the reader promotes the row
+      // to "running subprocess" when this list is non-empty.
+      const background = runningSubprocesses(payload);
+      updateSession(sid, payload, {
+        state: 'waiting',
+        waiting: 'turn',
+        activity: null,
+        background: background.length ? background : null,
+      });
       break;
+    }
     case 'Notification': {
       // Never fires in the VSCode extension; a bonus signal in the terminal CLI.
       const t = payload.notification_type;
       const waiting = t === 'permission_prompt' ? 'permission' : t === 'idle_prompt' ? 'idle' : 'turn';
-      updateSession(sid, payload, { state: 'waiting', waiting, activity: null });
+      updateSession(sid, payload, { state: 'waiting', waiting, activity: null, background: null });
       break;
     }
     case 'SessionEnd':
-      updateSession(sid, payload, { state: 'waiting', waiting: 'ended', activity: null });
+      updateSession(sid, payload, { state: 'waiting', waiting: 'ended', activity: null, background: null });
       break;
     default:
       break;

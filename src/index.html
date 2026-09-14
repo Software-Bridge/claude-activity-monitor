@@ -529,7 +529,14 @@
           // The line most likely to be cut off, so it gets its own hover target —
           // pointing at the same session box the heading opens.
           act.dataset.key = 'act:' + s.id;
-          if (s.activity) {
+          if (s.activity && s.activity.background) {
+            // Claude's turn is over but a command it launched is still running.
+            const tool = document.createElement('span');
+            tool.className = 'tool';
+            tool.textContent = 'running subprocess';
+            act.append(tool);
+            if (s.activity.detail) act.append(document.createTextNode(' · ' + s.activity.detail));
+          } else if (s.activity) {
             const tool = document.createElement('span');
             tool.className = 'tool';
             tool.textContent = s.activity.tool;
@@ -610,7 +617,7 @@
         if (s.activity) {
           const tool = document.createElement('span');
           tool.className = 'tool';
-          tool.textContent = s.activity.tool;
+          tool.textContent = s.activity.background ? 'subprocess' : s.activity.tool;
           const value = [tool];
           if (s.activity.detail) value.push(document.createTextNode(' ' + s.activity.detail));
           rows.push(detailRow('running', value));
