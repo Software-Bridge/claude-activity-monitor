@@ -62,8 +62,88 @@ const WORKING_SILENT_MS = SILENT_FOR_MS;
 /** Long past the point where a file could belong to anything still running. */
 const GARBAGE_AFTER_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * A healthy working session emits a tool event every few seconds. This much
+ * silence at "working" is the cue to look at the transcript for a turn that died
+ * on an API error — which fires no hook, so the record stays frozen at "working".
+ * Kept above the noise of a slow single tool call so we do not read transcripts
+ * of sessions that are simply busy.
+ */
+const STALL_AFTER_MS = 30 * 1000;
+
 // The description is immutable once written, so it is worth never re-reading.
 const descriptions = new Map();
+
+// Keyed by transcript path; a frozen transcript is read once and remembered by
+// its mtime, so a stalled session does not re-read the file every 400ms poll.
+const apiErrorByTranscript = new Map();
+
+/** A short badge label for the kind of API error, from the message text. */
+function apiErrorLabel(text) {
+  if (/safeguard|flagged/i.test(text)) return 'flagged';
+  if (/rate limit/i.test(text)) return 'rate limited';
+  if (/overloaded|capacity/i.test(text)) return 'overloaded';
+  return 'API error';
+}
+
+/**
+ * If the last assistant turn in the transcript ended in an API error, describe
+ * it; otherwise null. Reads only the tail — the last assistant entry sits near
+ * the end — and caches on mtime so a frozen transcript costs one read.
+ */
+function lastTurnApiError(transcriptPath) {
+  if (typeof transcriptPath !== 'string' || !transcriptPath) return null;
+
+  let stat;
+  try {
+    stat = fs.statSync(transcriptPath);
+  } catch {
+    return null;
+  }
+  const cached = apiErrorByTranscript.get(transcriptPath);
+  if (cached && cached.mtimeMs === stat.mtimeMs) return cached.result;
+
+  let result = null;
+  try {
+    const span = Math.min(stat.size, 64 * 1024);
+    const buf = Buffer.alloc(span);
+    const fd = fs.openSync(transcriptPath, 'r');
+    try {
+      fs.readSync(fd, buf, 0, span, stat.size - span);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const lines = buf.toString('utf8').split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (!line || line[0] !== '{') continue;
+      let o;
+      try {
+        o = JSON.parse(line);
+      } catch {
+        continue; // a torn first line from the tail window; skip it
+      }
+      if (o.type !== 'assistant') continue;
+      // The last assistant entry decides: an API error there is a dead turn.
+      if (o.isApiErrorMessage) {
+        const c = o.message && o.message.content;
+        const text =
+          typeof c === 'string' ? c : Array.isArray(c) ? c.map((x) => x.text || '').join('') : '';
+        // Just the gist: the first sentence, capped, so the hover row stays short.
+        const first = text.replace(/\s+/g, ' ').trim();
+        const sentence = first.split('. ')[0];
+        const detail = (sentence.length > 140 ? sentence.slice(0, 139) + '…' : sentence) || null;
+        result = { label: apiErrorLabel(text), detail };
+      }
+      break;
+    }
+  } catch {
+    result = null;
+  }
+
+  apiErrorByTranscript.set(transcriptPath, { mtimeMs: stat.mtimeMs, result });
+  return result;
+}
 
 function projectOf(cwd) {
   return cwd ? cwd.split(/[\\/]/).filter(Boolean).pop() : null;
@@ -276,14 +356,32 @@ function readSessions(now, agentSessionIds) {
         }
       : null;
 
+    let state = displayWorking ? 'working' : 'waiting';
+    let waiting = displayWorking ? null : s.waiting || 'turn';
+    let error = null;
+
+    // A record stuck at "working" — no tool in flight, no subprocess, no agents,
+    // and quiet — may be a turn that died on an API error, which fires no hook to
+    // move it off "working". Confirm against the transcript before saying so, so a
+    // session that is merely thinking for a while is left alone.
+    if (working && !hasAgents && !hasBackground && !ownActivity && quietFor > STALL_AFTER_MS) {
+      const apiErr = lastTurnApiError(s.transcript_path);
+      if (apiErr) {
+        state = 'stalled';
+        waiting = null;
+        error = apiErr;
+      }
+    }
+
     sessions.push({
       id: s.session_id,
       cwd: s.cwd,
       project: projectOf(s.cwd),
       title: s.title || null,
-      state: displayWorking ? 'working' : 'waiting',
-      waiting: displayWorking ? null : s.waiting || 'turn',
+      state,
+      waiting,
       activity: ownActivity || bgActivity,
+      error,
       startedAt: s.startedAt,
       agents: [],
     });
@@ -337,7 +435,9 @@ function liveState(now = Date.now()) {
   }
 
   // Busiest sections first: working above waiting, then oldest session first.
-  const rank = (s) => (s.state === 'working' ? 0 : 1);
+  // Working first, then stalled (a dead turn wants your attention before the
+  // sessions merely waiting on you), then the rest.
+  const rank = (s) => (s.state === 'working' ? 0 : s.state === 'stalled' ? 1 : 2);
   sessions.sort((a, b) => rank(a) - rank(b) || a.startedAt - b.startedAt || a.id.localeCompare(b.id));
 
   return sessions;
