@@ -215,6 +215,7 @@
       .state-dot.waiting { background: var(--wait); }
       .state-dot.permission { background: var(--alert); }
       .state-dot.done { background: var(--done); }
+      .state-dot.stalled { background: var(--alert); }
 
       .session-project {
         font-size: 12px;
@@ -238,6 +239,7 @@
       /* Deliberately not bold: finished work is a fact to notice in passing, not
          a thing to be pulled towards. */
       .session-status.done { color: var(--done); }
+      .session-status.stalled { color: var(--alert); font-weight: 600; }
 
       /* The live tool line and the subagents share one indent, so they read as a
          single list hanging off the window heading above them. */
@@ -250,6 +252,7 @@
         text-overflow: ellipsis;
       }
       .session-activity .tool { color: var(--accent-soft); font-weight: 600; }
+      .session-activity .err { color: var(--alert); font-weight: 600; }
 
       .agent {
         display: flex;
@@ -524,7 +527,12 @@
         head.className = 'session-head';
         head.dataset.key = 's:' + s.id;
 
-        const tone = s.state === 'working' ? 'working' : TONE[s.waiting] || 'done';
+        const tone =
+          s.state === 'working'
+            ? 'working'
+            : s.state === 'stalled'
+              ? 'stalled'
+              : TONE[s.waiting] || 'done';
 
         const dot = document.createElement('span');
         dot.className = 'state-dot ' + tone;
@@ -537,6 +545,9 @@
         if (s.state === 'working') {
           status.className = 'session-status';
           status.textContent = elapsed(s.startedAt);
+        } else if (s.state === 'stalled') {
+          status.className = 'session-status stalled';
+          status.textContent = 'API error';
         } else {
           status.className = 'session-status ' + tone;
           status.textContent = WAITING_LABEL[s.waiting] || 'concluded';
@@ -545,6 +556,19 @@
         head.append(dot, project, status);
         section.append(head);
 
+        // A dead turn: say what killed it, on the same line the tool would use.
+        if (s.state === 'stalled' && s.error) {
+          const line = document.createElement('div');
+          line.className = 'session-activity';
+          line.dataset.key = 'act:' + s.id;
+          const tag = document.createElement('span');
+          tag.className = 'err';
+          tag.textContent = 'stalled · ' + (s.error.label || 'API error');
+          line.append(tag);
+          if (s.error.detail) line.append(document.createTextNode(' · ' + s.error.detail));
+          section.append(line);
+        }
+
         // The live tool line, only while there is one to show.
         if (s.state === 'working' && (s.activity || s.agents.length === 0)) {
           const act = document.createElement('div');
@@ -552,7 +576,14 @@
           // The line most likely to be cut off, so it gets its own hover target —
           // pointing at the same session box the heading opens.
           act.dataset.key = 'act:' + s.id;
-          if (s.activity) {
+          if (s.activity && s.activity.background) {
+            // Claude's turn is over but a command it launched is still running.
+            const tool = document.createElement('span');
+            tool.className = 'tool';
+            tool.textContent = 'running subprocess';
+            act.append(tool);
+            if (s.activity.detail) act.append(document.createTextNode(' · ' + (s.activity.lead || s.activity.detail)));
+          } else if (s.activity) {
             const tool = document.createElement('span');
             tool.className = 'tool';
             tool.textContent = s.activity.tool;
@@ -629,14 +660,20 @@
             'state',
             s.state === 'working'
               ? 'working · ' + elapsed(s.startedAt)
-              : WAITING_LABEL[s.waiting] || 'concluded'
+              : s.state === 'stalled'
+                ? 'stalled · ' + (s.error ? s.error.label : 'API error')
+                : WAITING_LABEL[s.waiting] || 'concluded'
           )
         );
+
+        if (s.state === 'stalled' && s.error && s.error.detail) {
+          rows.push(detailRow('error', s.error.detail));
+        }
 
         if (s.activity) {
           const tool = document.createElement('span');
           tool.className = 'tool';
-          tool.textContent = s.activity.tool;
+          tool.textContent = s.activity.background ? 'subprocess' : s.activity.tool;
           const value = [tool];
           if (s.activity.detail) value.push(document.createTextNode(' ' + s.activity.detail));
           rows.push(detailRow('running', value));
@@ -710,10 +747,12 @@
       function render() {
         const n = sessions.length;
         const working = sessions.filter((s) => s.state === 'working').length;
-        const waiting = n - working;
+        const stalled = sessions.filter((s) => s.state === 'stalled').length;
+        const waiting = n - working - stalled;
 
         const parts = [];
         if (working) parts.push(working + ' active');
+        if (stalled) parts.push(stalled + ' stalled');
         if (waiting) parts.push(waiting + ' waiting');
         countEl.textContent = !connected ? 'setup' : n === 0 ? 'idle' : parts.join(' · ');
 
